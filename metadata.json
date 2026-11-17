@@ -1,0 +1,6 @@
+{
+  "name": "Physica Studio",
+  "description": "AI-powered 3D physics simulation studio enabling teachers to create, iterate, inspect, and export standalone Three.js educational simulations.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

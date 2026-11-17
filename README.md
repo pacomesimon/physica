@@ -1,11 +1,91 @@
-<div align="center">
+# Physica Studio — AI-Powered 3D Physics Simulation Studio
 
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
+Physica Studio is a web-based simulation engineering environment built for physics teachers. It pairs a natural-language AI simulation developer with a live sandboxed Three.js preview, CodeMirror source inspector, version history with diff comparison, and single-file standalone HTML export for students.
 
-  <h1>Built with AI Studio</h2>
+## Architecture & Directory Structure
 
-  <p>The fastest path from prompt to production with Gemini.</p>
+```text
+├── server.ts                          # Express + Vite middleware server (API routes & static serving)
+├── server/
+│   ├── agentController.ts             # Request validation, HTML verification, error mapping
+│   └── llm/
+│       ├── types.ts                   # ProviderAdapter interface & structured JSON normalization
+│       ├── geminiAdapter.ts           # @google/genai server-side adapter
+│       ├── openAiCompatAdapter.ts     # OpenAI-compatible /v1/chat/completions adapter
+│       ├── providerRegistry.ts        # Configurable adapter registry
+│       └── simulationSystemPrompt.ts  # Physics accuracy & AI-friendly HTML conventions
+├── src/
+│   ├── App.tsx                        # 3-part studio workspace (Projects, AI Chat, Dominant Preview)
+│   ├── components/
+│   │   ├── TopBar.tsx                 # Project title, save status, versions, standalone HTML export
+│   │   ├── ProjectSidebar.tsx         # New simulation, saved simulations, settings
+│   │   ├── ChatPanel.tsx              # Resizable AI conversation panel & suggested prompts
+│   │   ├── PreviewPanel.tsx           # Sandboxed iframe, viewport toggle, error recovery, source view
+│   │   ├── CodeEditor.tsx             # CodeMirror 6 editor & AI metadata section inspector
+│   │   ├── VersionHistoryModal.tsx    # Snapshot timeline, restore, and line-by-line diff viewer
+│   │   ├── ExportModal.tsx            # Standalone readiness checks & HTML download
+│   │   └── SettingsModal.tsx          # Provider/model selector, appearance theme, auto-snapshot
+│   └── lib/
+│       ├── demos/projectileMotion.ts  # Reference 3D Projectile Motion simulation & analytical engine
+│       ├── metadataParser.ts          # Parser for SIMULATION_METADATA & 10-section JS convention
+│       ├── htmlValidator.ts           # Structure, Three.js dependency, and secret-isolation validator
+│       ├── bridgeInjector.ts          # Ephemeral iframe postMessage bridge (stripped on export)
+│       ├── exporter.ts                # Standalone HTML packager
+│       └── storage.ts                 # LocalStorageRepository persistence abstraction
+└── tests/
+    └── studio.test.ts                 # Analytical physics, validation, bridge, and versioning tests
+```
 
-  <a href="https://aistudio.google.com/apps">Start building</a>
+## Standalone HTML & AI-Friendly Documentation Convention
 
-</div>
+Every generated simulation is a self-contained HTML5 document using Three.js r170 via an import map (`https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js`), with:
+- A structured `<!-- SIMULATION_METADATA ... -->` header documenting learning objectives, physical model, governing equations, interactive parameters, visual elements, controls, and agent guidance.
+- JavaScript organized into 10 consistent sections (`1. SIMULATION CONFIGURATION` through `10. CLEANUP AND RESET`).
+- Strict separation between physics calculations (`PHYSICS MODEL`), visual rendering, and UI controls.
+
+> **CDN Note:** Exported `.html` files run directly in any modern browser without an account or backend server, though internet access is required to load Three.js from jsDelivr CDN.
+
+## Setup & Local Development
+
+1. **Install dependencies**
+   ```bash
+   npm install
+   ```
+
+2. **Configure environment variables**
+   Set `GEMINI_API_KEY` in your server environment or `.env` (never exposed to browser code):
+   ```bash
+   GEMINI_API_KEY="your-gemini-api-key"
+   ```
+
+3. **Run development server**
+   ```bash
+   npm run dev
+   ```
+   Open `http://localhost:3000`.
+
+4. **Run tests & typechecks**
+   ```bash
+   npm test
+   npm run lint
+   ```
+
+## Configuring Alternative LLM Providers
+
+Physica Studio supports any OpenAI-compatible chat completions server (OpenAI, Ollama, LM Studio, vLLM, OpenRouter) via server-side environment variables:
+
+```bash
+LLM_PROVIDER="openai-compatible"
+OPENAI_COMPAT_BASE_URL="http://localhost:11434/v1"
+OPENAI_COMPAT_API_KEY="optional-key"
+OPENAI_COMPAT_MODEL="qwen2.5-coder:32b"
+```
+
+Select **OpenAI-Compatible Endpoint** in **Provider & Studio Settings** inside the app. All API credentials stay exclusively on the server.
+
+## Production Build & Deployment
+
+```bash
+npm run build
+NODE_ENV=production npm start
+```
