@@ -98,6 +98,7 @@ export interface StudioSettings {
   model: string;
   theme: 'light' | 'dark';
   autoSnapshot: boolean;
+  walkthroughVoiceURI?: string;
 }
 
 export interface ProviderOption {

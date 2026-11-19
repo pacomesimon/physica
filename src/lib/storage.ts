@@ -21,6 +21,7 @@ export const DEFAULT_SETTINGS: StudioSettings = {
   model: 'gemini-4-hydrogen',
   theme: 'light',
   autoSnapshot: true,
+  walkthroughVoiceURI: '',
 };
 
 export function createSeededProjectileProject(): SimulationProject {

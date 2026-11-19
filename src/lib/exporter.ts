@@ -39,8 +39,12 @@ export function extractCdnDependencies(html: string): string[] {
   return Array.from(urls);
 }
 
-export function prepareStandaloneExport(rawHtml: string, projectTitle?: string): ExportPackage {
-  const cleanHtml = ensureWalkthroughEmbedded(stripPreviewBridge(rawHtml).trim());
+export function prepareStandaloneExport(
+  rawHtml: string,
+  projectTitle?: string,
+  preferredVoice?: string
+): ExportPackage {
+  const cleanHtml = ensureWalkthroughEmbedded(stripPreviewBridge(rawHtml).trim(), preferredVoice);
   const metadata = parseSimulationMetadata(cleanHtml);
   const validation = validateSimulationHtml(cleanHtml);
   const filename = slugifyFilename(projectTitle || metadata.title);
@@ -57,8 +61,12 @@ export function prepareStandaloneExport(rawHtml: string, projectTitle?: string):
   };
 }
 
-export function downloadStandaloneHtml(rawHtml: string, filename: string): ExportPackage {
-  const pkg = prepareStandaloneExport(rawHtml, filename.replace(/\.html$/i, ''));
+export function downloadStandaloneHtml(
+  rawHtml: string,
+  filename: string,
+  preferredVoice?: string
+): ExportPackage {
+  const pkg = prepareStandaloneExport(rawHtml, filename.replace(/\.html$/i, ''), preferredVoice);
   const finalName = filename.endsWith('.html') ? filename : `${filename}.html`;
   const blob = new Blob([pkg.html], { type: 'text/html;charset=utf-8' });
   const url = URL.createObjectURL(blob);

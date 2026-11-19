@@ -20,6 +20,7 @@ export interface WalkthroughConfig {
   title: string;
   description: string;
   language?: string;
+  preferredVoice?: string;
   segments: WalkthroughSegment[];
 }
 

@@ -1,7 +1,8 @@
 export const WALKTHROUGH_ENGINE_START_MARKER = '<!-- WALKTHROUGH_ENGINE_START -->';
 export const WALKTHROUGH_ENGINE_END_MARKER = '<!-- WALKTHROUGH_ENGINE_END -->';
 
-export function buildStandaloneWalkthroughBundle(): string {
+export function buildStandaloneWalkthroughBundle(preferredVoice?: string): string {
+  const safePreferredVoiceLiteral = JSON.stringify(preferredVoice || '');
   return `${WALKTHROUGH_ENGINE_START_MARKER}
 <!--
   REUSABLE STANDALONE GUIDED WALKTHROUGH ENGINE
@@ -542,6 +543,10 @@ export function buildStandaloneWalkthroughBundle(): string {
       initialSnapshot: null,
       pausedSnapshot: null,
       suppressRecording: false,
+      preferredVoice:
+        (typeof window.WALKTHROUGH_PREFERRED_VOICE === 'string' && window.WALKTHROUGH_PREFERRED_VOICE) ||
+        (config && typeof config.preferredVoice === 'string' && config.preferredVoice) ||
+        ${safePreferredVoiceLiteral},
       voices: [],
     };
 
@@ -893,9 +898,41 @@ export function buildStandaloneWalkthroughBundle(): string {
       if (state.voices.length === 0) loadVoices();
       const targetLang = (config.language || 'en-US').toLowerCase();
       const langPrefix = targetLang.split('-')[0];
+      const preferredKey =
+        (typeof window.WALKTHROUGH_PREFERRED_VOICE === 'string' && window.WALKTHROUGH_PREFERRED_VOICE) ||
+        state.preferredVoice ||
+        '';
+      const forceBrowserDefault = preferredKey === '__browser_default__';
+      const preferredVoiceObj =
+        preferredKey && !forceBrowserDefault
+          ? state.voices.find(function (v) {
+              return v.voiceURI === preferredKey || v.name === preferredKey;
+            })
+          : null;
+      const googleUsEnglishVoice = !forceBrowserDefault
+        ? state.voices.find(function (v) {
+            return (
+              (v.name || '').trim().toLowerCase() === 'google us english' &&
+              (v.lang || '').toLowerCase() === 'en-us'
+            );
+          }) ||
+          state.voices.find(function (v) {
+            return (v.name || '').toLowerCase().indexOf('google us english') !== -1;
+          })
+        : null;
+      const googleEnglishFallback = !forceBrowserDefault
+        ? state.voices.find(function (v) {
+            const lowerName = (v.name || '').toLowerCase();
+            return lowerName.indexOf('google') !== -1 && lowerName.indexOf('english') !== -1;
+          })
+        : null;
       const chosenVoice =
+        preferredVoiceObj ||
+        googleUsEnglishVoice ||
+        googleEnglishFallback ||
         state.voices.find(function (v) { return (v.lang || '').toLowerCase() === targetLang; }) ||
         state.voices.find(function (v) { return (v.lang || '').toLowerCase().indexOf(langPrefix) === 0; }) ||
+        state.voices.find(function (v) { return Boolean(v.default); }) ||
         state.voices[0];
       if (chosenVoice) utterance.voice = chosenVoice;
 
@@ -1182,6 +1219,19 @@ export function buildStandaloneWalkthroughBundle(): string {
       cancelSpeech();
     });
 
+    // Allow Physica Studio host to update preferred narration voice live without reloading WebGL
+    window.addEventListener('message', function (event) {
+      const msg = event && event.data;
+      if (msg && msg.source === 'physica-studio' && msg.type === 'set_walkthrough_voice') {
+        const nextVoice = typeof msg.voiceURI === 'string' ? msg.voiceURI : '';
+        window.WALKTHROUGH_PREFERRED_VOICE = nextVoice;
+        state.preferredVoice = nextVoice;
+        if (state.status === 'playing' && state.activeSegmentIndex >= 0) {
+          speakSegment(state.activeSegmentIndex, false);
+        }
+      }
+    });
+
     // Expose public walkthrough controller for simulations and debugging
     window.walkthroughEngine = {
       play: play,
@@ -1189,6 +1239,14 @@ export function buildStandaloneWalkthroughBundle(): string {
       resume: resume,
       stop: stop,
       seekToSegment: seekToSegment,
+      setPreferredVoice: function (voiceURI) {
+        const nextVoice = typeof voiceURI === 'string' ? voiceURI : '';
+        window.WALKTHROUGH_PREFERRED_VOICE = nextVoice;
+        state.preferredVoice = nextVoice;
+        if (state.status === 'playing' && state.activeSegmentIndex >= 0) {
+          speakSegment(state.activeSegmentIndex, false);
+        }
+      },
       recordInteraction: recordInteraction,
       highlightElement: highlightElement,
       clearWalkthroughHighlights: clearWalkthroughHighlights,
@@ -1200,6 +1258,7 @@ export function buildStandaloneWalkthroughBundle(): string {
           walkthroughTimeMs: state.walkthroughTimeMs,
           totalDurationMs: totalDurationMs,
           speechRate: state.speechRate,
+          preferredVoice: state.preferredVoice,
           speechSupported: speechSupported,
         };
       },
@@ -1241,7 +1300,7 @@ export function stripWalkthroughBundle(html: string): string {
  * Ensures that a standalone simulation HTML document containing WALKTHROUGH_CONFIG
  * embeds the complete, unminified reusable WALKTHROUGH_PLAYBACK_ENGINE before </body>.
  */
-export function ensureWalkthroughEmbedded(html: string): string {
+export function ensureWalkthroughEmbedded(html: string, preferredVoice?: string): string {
   if (!/WALKTHROUGH_CONFIG/.test(html)) {
     return html;
   }
@@ -1259,7 +1318,7 @@ export function ensureWalkthroughEmbedded(html: string): string {
   }
 
   const cleaned = stripWalkthroughBundle(html);
-  const bundle = buildStandaloneWalkthroughBundle();
+  const bundle = buildStandaloneWalkthroughBundle(preferredVoice);
 
   if (/<\/body>/i.test(cleaned)) {
     return cleaned.replace(/<\/body>/i, () => `\n${bundle}\n</body>`);

@@ -18,6 +18,7 @@ import { CodeEditor } from './CodeEditor';
 interface PreviewPanelProps {
   html: string;
   theme: 'light' | 'dark';
+  preferredVoice?: string;
   diagnostics: RuntimeDiagnostic[];
   onAddDiagnostic: (diag: RuntimeDiagnostic) => void;
   onClearDiagnostics: () => void;
@@ -28,6 +29,7 @@ interface PreviewPanelProps {
 export const PreviewPanel: React.FC<PreviewPanelProps> = ({
   html,
   theme,
+  preferredVoice,
   diagnostics,
   onAddDiagnostic,
   onClearDiagnostics,
@@ -75,6 +77,18 @@ export const PreviewPanel: React.FC<PreviewPanelProps> = ({
 
       if (data.type === 'sim_ready') {
         setSimStatus((prev) => (prev === 'error' ? 'error' : 'ready'));
+        try {
+          iframeRef.current?.contentWindow?.postMessage(
+            {
+              source: 'physica-studio',
+              type: 'set_walkthrough_voice',
+              voiceURI: preferredVoice || '',
+            },
+            '*'
+          );
+        } catch {
+          // Ignore cross-frame postMessage errors
+        }
       } else if (data.type === 'runtime_error' || data.type === 'console_error') {
         setSimStatus('error');
         onAddDiagnostic({
@@ -98,7 +112,22 @@ export const PreviewPanel: React.FC<PreviewPanelProps> = ({
 
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
-  }, [onAddDiagnostic]);
+  }, [onAddDiagnostic, preferredVoice]);
+
+  useEffect(() => {
+    try {
+      iframeRef.current?.contentWindow?.postMessage(
+        {
+          source: 'physica-studio',
+          type: 'set_walkthrough_voice',
+          voiceURI: preferredVoice || '',
+        },
+        '*'
+      );
+    } catch {
+      // Ignore cross-frame postMessage errors
+    }
+  }, [preferredVoice]);
 
   useEffect(() => {
     const onFullscreenChange = () => {

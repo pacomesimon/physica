@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  BROWSER_DEFAULT_VOICE_VALUE,
   HighlightManager,
+  selectWalkthroughVoice,
   WalkthroughController,
   WalkthroughStateManager,
   type DocumentLike,
@@ -602,9 +604,74 @@ test('Reference Projectile Motion & Standalone Export: complete walkthrough, sim
   // Verify stripWalkthroughBundle + ensureWalkthroughEmbedded round-trips cleanly
   const stripped = stripWalkthroughBundle(pkg.html);
   assert.doesNotMatch(stripped, /id="walkthrough-panel"/);
-  const reEmbedded = ensureWalkthroughEmbedded(stripped);
+  const reEmbedded = ensureWalkthroughEmbedded(stripped, 'Google UK English Female');
   const reVal = validateSimulationHtml(reEmbedded);
   assert.equal(reVal.valid, true);
   assert.equal(reVal.hasWalkthroughEngine, true);
+  assert.match(reEmbedded, /Google UK English Female/);
   assert.ok(buildStandaloneWalkthroughBundle().includes('WALKTHROUGH_PLAYBACK_ENGINE'));
+});
+
+test('Speech engine: honors preferredVoice selection and updates live via setPreferredVoice', () => {
+  const { synth, createUtterance } = createMockSpeech();
+  synth.getVoices = () => [
+    { name: 'Samantha', lang: 'en-US', voiceURI: 'com.apple.voice.Samantha', default: true },
+    { name: 'Daniel', lang: 'en-GB', voiceURI: 'com.apple.voice.Daniel', default: false },
+  ];
+
+  const simApi = createMockSimulationAPI({
+    time: 0,
+    running: true,
+    parameters: { v0: 24 },
+  });
+
+  const controller = new WalkthroughController({
+    config: SAMPLE_CONFIG,
+    simulationAPI: simApi,
+    speechSynthesis: synth,
+    createUtterance,
+    preferredVoice: 'com.apple.voice.Daniel',
+  });
+
+  controller.play();
+  assert.equal((synth.spoken[0].voice as { name?: string })?.name, 'Daniel');
+
+  // Switch preferred voice live while narrating
+  controller.setPreferredVoice('com.apple.voice.Samantha');
+  assert.equal((synth.spoken[1].voice as { name?: string })?.name, 'Samantha');
+
+  // Unknown voice gracefully falls back to language-matched voice
+  controller.setPreferredVoice('non-existent-voice-uri');
+  assert.equal((synth.spoken[2].voice as { name?: string })?.name, 'Samantha');
+
+  controller.dispose();
+});
+
+test('Speech engine: default voice prioritizes Google US English (en-US), then Google+English, then Browser Default', () => {
+  const allVoices = [
+    { name: 'Samantha', lang: 'en-US', voiceURI: 'Samantha', default: true },
+    { name: 'Google UK English Female', lang: 'en-GB', voiceURI: 'Google UK English Female' },
+    { name: 'Google US English', lang: 'en-US', voiceURI: 'Google US English' },
+    { name: 'Google Deutsch', lang: 'de-DE', voiceURI: 'Google Deutsch' },
+  ];
+
+  // 1. Default prefers Google US English (en-US)
+  assert.equal(selectWalkthroughVoice(allVoices, '', 'en-US')?.name, 'Google US English');
+
+  // 2. If Google US English is unavailable, picks another voice containing both "google" and "english"
+  const withoutUs = allVoices.filter((v) => v.name !== 'Google US English');
+  assert.equal(selectWalkthroughVoice(withoutUs, '', 'en-US')?.name, 'Google UK English Female');
+
+  // 3. If no Google English voice exists, falls back to Browser Default (Auto-match language)
+  const withoutGoogleEnglish = [
+    { name: 'Google Deutsch', lang: 'de-DE', voiceURI: 'Google Deutsch' },
+    { name: 'Samantha', lang: 'en-US', voiceURI: 'Samantha', default: true },
+  ];
+  assert.equal(selectWalkthroughVoice(withoutGoogleEnglish, '', 'en-US')?.name, 'Samantha');
+
+  // 4. Explicit Browser Default selection skips Google priority and uses browser default / language match
+  assert.equal(
+    selectWalkthroughVoice(allVoices, BROWSER_DEFAULT_VOICE_VALUE, 'en-US')?.name,
+    'Samantha'
+  );
 });

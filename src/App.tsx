@@ -450,6 +450,7 @@ export default function App() {
           <PreviewPanel
             html={activeProject.currentHtml}
             theme={settings.theme}
+            preferredVoice={settings.walkthroughVoiceURI}
             diagnostics={diagnostics}
             onAddDiagnostic={handleAddDiagnostic}
             onClearDiagnostics={handleClearDiagnostics}
@@ -472,6 +473,7 @@ export default function App() {
         <ExportModal
           html={activeProject.currentHtml}
           projectTitle={activeProject.title}
+          preferredVoice={settings.walkthroughVoiceURI}
           onClose={() => setExportModalOpen(false)}
         />
       )}

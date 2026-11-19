@@ -5,16 +5,25 @@ import { downloadStandaloneHtml, prepareStandaloneExport } from '../lib/exporter
 interface ExportModalProps {
   html: string;
   projectTitle: string;
+  preferredVoice?: string;
   onClose: () => void;
 }
 
-export const ExportModal: React.FC<ExportModalProps> = ({ html, projectTitle, onClose }) => {
-  const pkg = useMemo(() => prepareStandaloneExport(html, projectTitle), [html, projectTitle]);
+export const ExportModal: React.FC<ExportModalProps> = ({
+  html,
+  projectTitle,
+  preferredVoice,
+  onClose,
+}) => {
+  const pkg = useMemo(
+    () => prepareStandaloneExport(html, projectTitle, preferredVoice),
+    [html, projectTitle, preferredVoice]
+  );
   const [filename, setFilename] = useState(pkg.filename);
   const [exported, setExported] = useState(false);
 
   const handleDownload = () => {
-    downloadStandaloneHtml(html, filename);
+    downloadStandaloneHtml(html, filename, preferredVoice);
     setExported(true);
   };
 

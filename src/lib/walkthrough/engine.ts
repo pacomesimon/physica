@@ -9,6 +9,67 @@ import type {
   WalkthroughSnapshot,
 } from './types.ts';
 
+export interface SpeechVoiceLike {
+  name?: string;
+  lang?: string;
+  voiceURI?: string;
+  default?: boolean;
+}
+
+export const BROWSER_DEFAULT_VOICE_VALUE = '__browser_default__';
+
+export function findDefaultGoogleEnglishVoice<T extends SpeechVoiceLike>(
+  voices: T[]
+): T | undefined {
+  if (!Array.isArray(voices) || voices.length === 0) return undefined;
+
+  const exactGoogleUs =
+    voices.find(
+      (v) =>
+        (v.name || '').trim().toLowerCase() === 'google us english' &&
+        (v.lang || '').toLowerCase() === 'en-us'
+    ) ||
+    voices.find((v) => (v.name || '').toLowerCase().includes('google us english'));
+
+  if (exactGoogleUs) return exactGoogleUs;
+
+  return voices.find(
+    (v) => /google/i.test(v.name || '') && /english/i.test(v.name || '')
+  );
+}
+
+export function selectWalkthroughVoice<T extends SpeechVoiceLike>(
+  voices: T[],
+  preferredVoice?: string,
+  targetLanguage = 'en-US'
+): T | undefined {
+  if (!Array.isArray(voices) || voices.length === 0) return undefined;
+
+  const trimmedPref = (preferredVoice || '').trim();
+  const forceBrowserDefault = trimmedPref === BROWSER_DEFAULT_VOICE_VALUE;
+
+  if (trimmedPref && !forceBrowserDefault) {
+    const explicit = voices.find(
+      (v) => v.voiceURI === trimmedPref || v.name === trimmedPref
+    );
+    if (explicit) return explicit;
+  }
+
+  if (!forceBrowserDefault) {
+    const googleDefault = findDefaultGoogleEnglishVoice(voices);
+    if (googleDefault) return googleDefault;
+  }
+
+  const targetLang = (targetLanguage || 'en-US').toLowerCase();
+  const langPrefix = targetLang.split('-')[0];
+  return (
+    voices.find((v) => (v.lang || '').toLowerCase() === targetLang) ||
+    voices.find((v) => (v.lang || '').toLowerCase().startsWith(langPrefix)) ||
+    voices.find((v) => Boolean(v.default)) ||
+    voices[0]
+  );
+}
+
 export interface SpeechSynthesisLike {
   speaking?: boolean;
   paused?: boolean;
@@ -17,7 +78,7 @@ export interface SpeechSynthesisLike {
   pause(): void;
   resume(): void;
   cancel(): void;
-  getVoices?(): Array<{ name?: string; lang?: string; default?: boolean }>;
+  getVoices?(): SpeechVoiceLike[];
   addEventListener?(type: string, listener: () => void): void;
   removeEventListener?(type: string, listener: () => void): void;
 }
@@ -321,6 +382,7 @@ export interface WalkthroughControllerOptions {
   speechRate?: number;
   pitch?: number;
   volume?: number;
+  preferredVoice?: string;
 }
 
 /**
@@ -345,6 +407,7 @@ export class WalkthroughController {
   private speechRate: number;
   private pitch: number;
   private volume: number;
+  private preferredVoice: string;
   private errorMessage: string | undefined;
 
   private utteranceToken = 0;
@@ -362,6 +425,7 @@ export class WalkthroughController {
     this.speechRate = options.speechRate ?? 1.0;
     this.pitch = options.pitch ?? 1.0;
     this.volume = options.volume ?? 1.0;
+    this.preferredVoice = options.preferredVoice ?? options.config.preferredVoice ?? '';
 
     this.stateManager = new WalkthroughStateManager(options.simulationAPI);
     this.highlighter = new HighlightManager(options.document ?? null);
@@ -387,6 +451,14 @@ export class WalkthroughController {
   setSpeechRate(rate: number): void {
     const clamped = Math.min(2.0, Math.max(0.5, Number(rate) || 1.0));
     this.speechRate = clamped;
+    if (this.status === 'playing' && this.activeSegmentIndex >= 0) {
+      this.speakSegment(this.activeSegmentIndex, false);
+    }
+    this.emitState();
+  }
+
+  setPreferredVoice(voiceURI?: string): void {
+    this.preferredVoice = voiceURI || '';
     if (this.status === 'playing' && this.activeSegmentIndex >= 0) {
       this.speakSegment(this.activeSegmentIndex, false);
     }
@@ -599,14 +671,14 @@ export class WalkthroughController {
     utterance.pitch = this.pitch;
     utterance.volume = this.volume;
 
-    // Pick best matching voice if available
+    // Pick preferred voice (explicit choice -> Google US English (en-US) -> Google+English -> browser default)
     if (typeof this.speech.getVoices === 'function') {
       const voices = this.speech.getVoices() || [];
-      const langPrefix = (this.config.language || 'en-US').toLowerCase().split('-')[0];
-      const match =
-        voices.find((v) => v.lang?.toLowerCase() === (this.config.language || 'en-US').toLowerCase()) ||
-        voices.find((v) => v.lang?.toLowerCase().startsWith(langPrefix)) ||
-        voices[0];
+      const match = selectWalkthroughVoice(
+        voices,
+        this.preferredVoice,
+        this.config.language || 'en-US'
+      );
       if (match) {
         utterance.voice = match;
       }
