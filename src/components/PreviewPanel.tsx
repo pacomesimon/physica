@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { injectPreviewBridge } from '../lib/bridgeInjector';
 import { validateSimulationHtml } from '../lib/htmlValidator';
+import { ensureWalkthroughEmbedded } from '../lib/walkthrough/embedder';
 import type { RuntimeDiagnostic } from '../types/simulation';
 import { CodeEditor } from './CodeEditor';
 
@@ -46,7 +47,10 @@ export const PreviewPanel: React.FC<PreviewPanelProps> = ({
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
 
   const validation = useMemo(() => validateSimulationHtml(html), [html]);
-  const bridgedSrcDoc = useMemo(() => injectPreviewBridge(html), [html]);
+  const bridgedSrcDoc = useMemo(
+    () => injectPreviewBridge(ensureWalkthroughEmbedded(html)),
+    [html]
+  );
   const contentHash = useMemo(() => {
     let hash = 5381;
     for (let i = 0; i < bridgedSrcDoc.length; i++) {

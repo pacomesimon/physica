@@ -247,6 +247,82 @@ export function buildStandaloneWalkthroughBundle(preferredVoice?: string): strin
     display: none;
   }
 
+  .wt-view-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    padding-top: 2px;
+  }
+
+  .wt-view-row .wt-mini-btn {
+    flex: 1;
+    text-align: center;
+    padding: 4px 8px;
+  }
+
+  .wt-mini-btn.wt-active-toggle {
+    background: rgba(2, 132, 199, 0.2);
+    border-color: rgba(56, 189, 248, 0.55);
+    color: #e0f2fe;
+  }
+
+  #walkthrough-caption {
+    position: fixed;
+    left: 50%;
+    bottom: 18px;
+    transform: translateX(-50%);
+    max-width: min(720px, calc(100vw - 32px));
+    padding: 9px 32px 9px 14px;
+    background: rgba(0, 0, 0, 0.5);
+    color: #ffffff;
+    border-radius: 8px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-size: 13px;
+    line-height: 1.45;
+    text-align: center;
+    z-index: 34;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+    pointer-events: none;
+    display: none;
+    transition: bottom 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  #walkthrough-caption.wt-caption-visible {
+    display: block;
+  }
+
+  #walkthrough-caption-text {
+    display: block;
+    color: #ffffff;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+  }
+
+  .wt-caption-close {
+    position: absolute;
+    top: 5px;
+    right: 6px;
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.72);
+    font-size: 14px;
+    line-height: 1;
+    cursor: pointer;
+    pointer-events: auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .wt-caption-close:hover {
+    background: rgba(255, 255, 255, 0.16);
+    color: #ffffff;
+  }
+
   #walkthrough-transcript {
     overflow-y: auto;
     padding: 8px 10px 10px;
@@ -328,6 +404,11 @@ export function buildStandaloneWalkthroughBundle(preferredVoice?: string): strin
 
 <div id="walkthrough-tooltip" role="tooltip" aria-hidden="true"></div>
 
+<div id="walkthrough-caption" role="region" aria-label="Walkthrough Caption" aria-live="polite" aria-hidden="true">
+  <span id="walkthrough-caption-text"></span>
+  <button id="wt-btn-caption-close" class="wt-caption-close" type="button" title="Hide captions" aria-label="Hide captions">&times;</button>
+</div>
+
 <section id="walkthrough-panel" aria-label="Guided Simulation Walkthrough">
   <div class="wt-header">
     <div>
@@ -335,7 +416,6 @@ export function buildStandaloneWalkthroughBundle(preferredVoice?: string): strin
       <div id="wt-description" class="wt-description">Interactive narrated orientation</div>
     </div>
     <div class="wt-header-actions">
-      <button id="wt-btn-transcript" class="wt-mini-btn" type="button">Hide Transcript</button>
       <button id="wt-btn-minimize" class="wt-mini-btn" type="button">Minimize</button>
     </div>
   </div>
@@ -377,10 +457,15 @@ export function buildStandaloneWalkthroughBundle(preferredVoice?: string): strin
         </div>
       </div>
 
+      <div class="wt-view-row">
+        <button id="wt-btn-captions" class="wt-mini-btn wt-active-toggle" type="button" aria-pressed="true">Hide Captions</button>
+        <button id="wt-btn-transcript" class="wt-mini-btn" type="button" aria-expanded="false">Show Transcript</button>
+      </div>
+
       <div id="wt-status-banner" class="wt-status-banner" role="status"></div>
     </div>
 
-    <div id="walkthrough-transcript" aria-label="Walkthrough Transcript"></div>
+    <div id="walkthrough-transcript" class="wt-hidden" aria-label="Walkthrough Transcript"></div>
   </div>
 </section>
 
@@ -548,6 +633,7 @@ export function buildStandaloneWalkthroughBundle(preferredVoice?: string): strin
         (config && typeof config.preferredVoice === 'string' && config.preferredVoice) ||
         ${safePreferredVoiceLiteral},
       voices: [],
+      captionsVisible: true,
     };
 
     function loadVoices() {
@@ -777,6 +863,71 @@ export function buildStandaloneWalkthroughBundle(preferredVoice?: string): strin
       }
     }
 
+    function positionCaption() {
+      const captionEl = document.getElementById('walkthrough-caption');
+      if (!captionEl) return;
+
+      const vh = window.innerHeight || document.documentElement.clientHeight || 0;
+      let bottomOffset = 18;
+
+      const bottomCandidates = [
+        '#control-dock',
+        '#dock-restore-btn',
+        '#controls-panel',
+        '#control-panel',
+        '#controls',
+        '.controls-bar',
+      ];
+      if (window.innerWidth <= 720) {
+        bottomCandidates.push('#walkthrough-panel');
+      }
+
+      bottomCandidates.forEach(function (selector) {
+        const el = document.querySelector(selector);
+        if (!el) return;
+        const style = window.getComputedStyle(el);
+        if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) {
+          return;
+        }
+        if (el.classList.contains('collapsed')) return;
+        const rect = el.getBoundingClientRect();
+        const elHeight = el.offsetHeight || rect.height;
+        const elWidth = el.offsetWidth || rect.width;
+        if (elHeight <= 0 || elWidth <= 0) return;
+
+        const bottomPx = style.position === 'fixed' ? parseFloat(style.bottom) : NaN;
+        if (!isNaN(bottomPx) && bottomPx >= 0 && bottomPx < vh * 0.45 && elHeight < vh * 0.65) {
+          const candidateBottom = Math.round(bottomPx + elHeight + 10);
+          if (candidateBottom > bottomOffset) {
+            bottomOffset = candidateBottom;
+          }
+          return;
+        }
+
+        // Fallback for non-fixed or bottom-auto elements anchored in the lower portion of the viewport
+        if (rect.top < vh - 8 && rect.bottom >= vh - 48 && rect.top > vh * 0.35) {
+          const candidateBottom = Math.round(vh - rect.top + 10);
+          if (candidateBottom > bottomOffset) {
+            bottomOffset = candidateBottom;
+          }
+        }
+      });
+
+      const maxBottom = Math.max(18, vh - 96);
+      captionEl.style.bottom = Math.min(bottomOffset, maxBottom) + 'px';
+    }
+
+    function setCaptionsVisible(visible) {
+      state.captionsVisible = Boolean(visible);
+      const btnCaptions = document.getElementById('wt-btn-captions');
+      if (btnCaptions) {
+        btnCaptions.textContent = state.captionsVisible ? 'Hide Captions' : 'Show Captions';
+        btnCaptions.setAttribute('aria-pressed', state.captionsVisible ? 'true' : 'false');
+        btnCaptions.classList.toggle('wt-active-toggle', state.captionsVisible);
+      }
+      updateUI(false);
+    }
+
     function updateUI(scrollActiveIntoView) {
       const btnPlay = document.getElementById('wt-btn-play');
       const btnPause = document.getElementById('wt-btn-pause');
@@ -785,6 +936,8 @@ export function buildStandaloneWalkthroughBundle(preferredVoice?: string): strin
       const track = document.getElementById('wt-progress-track');
       const timeLbl = document.getElementById('wt-time-label');
       const segLbl = document.getElementById('wt-segment-label');
+      const captionEl = document.getElementById('walkthrough-caption');
+      const captionTextEl = document.getElementById('walkthrough-caption-text');
 
       if (btnPlay) {
         btnPlay.textContent = state.status === 'paused' ? 'Resume' : 'Play';
@@ -819,14 +972,33 @@ export function buildStandaloneWalkthroughBundle(preferredVoice?: string): strin
         segLbl.textContent = statusWord + ' · ' + displayIdx + ' / ' + segments.length;
       }
 
+      if (captionEl && captionTextEl) {
+        const activeSeg = state.activeSegmentIndex >= 0 ? segments[state.activeSegmentIndex] : null;
+        const shouldShowCaption =
+          state.captionsVisible &&
+          Boolean(activeSeg && activeSeg.text) &&
+          (state.status === 'playing' || state.status === 'paused');
+        if (shouldShowCaption) {
+          captionTextEl.textContent = activeSeg.text;
+          captionEl.classList.add('wt-caption-visible');
+          captionEl.setAttribute('aria-hidden', 'false');
+          positionCaption();
+        } else {
+          captionEl.classList.remove('wt-caption-visible');
+          captionEl.setAttribute('aria-hidden', 'true');
+        }
+      }
+
       const nodes = document.querySelectorAll('#walkthrough-transcript .transcript-segment');
+      const transcriptEl = document.getElementById('walkthrough-transcript');
+      const transcriptVisible = transcriptEl && !transcriptEl.classList.contains('wt-hidden');
       nodes.forEach(function (node, idx) {
         node.classList.remove('wt-active', 'wt-completed');
         if (state.status === 'completed' || (state.activeSegmentIndex >= 0 && idx < state.activeSegmentIndex)) {
           node.classList.add('wt-completed');
         } else if (idx === state.activeSegmentIndex) {
           node.classList.add('wt-active');
-          if (scrollActiveIntoView && typeof node.scrollIntoView === 'function') {
+          if (scrollActiveIntoView && transcriptVisible && typeof node.scrollIntoView === 'function') {
             node.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
           }
         }
@@ -1124,6 +1296,8 @@ export function buildStandaloneWalkthroughBundle(preferredVoice?: string): strin
     const rateSelect = document.getElementById('wt-select-rate');
     const track = document.getElementById('wt-progress-track');
     const btnTranscript = document.getElementById('wt-btn-transcript');
+    const btnCaptions = document.getElementById('wt-btn-captions');
+    const btnCaptionClose = document.getElementById('wt-btn-caption-close');
     const btnMinimize = document.getElementById('wt-btn-minimize');
 
     if (btnPlay) btnPlay.addEventListener('click', play);
@@ -1161,12 +1335,31 @@ export function buildStandaloneWalkthroughBundle(preferredVoice?: string): strin
         }
       });
     }
+    if (btnCaptions) {
+      btnCaptions.addEventListener('click', function () {
+        setCaptionsVisible(!state.captionsVisible);
+      });
+    }
+    if (btnCaptionClose) {
+      btnCaptionClose.addEventListener('click', function () {
+        setCaptionsVisible(false);
+      });
+    }
     if (btnTranscript) {
       btnTranscript.addEventListener('click', function () {
         const el = document.getElementById('walkthrough-transcript');
         if (!el) return;
         const hidden = el.classList.toggle('wt-hidden');
         btnTranscript.textContent = hidden ? 'Show Transcript' : 'Hide Transcript';
+        btnTranscript.setAttribute('aria-expanded', hidden ? 'false' : 'true');
+        btnTranscript.classList.toggle('wt-active-toggle', !hidden);
+        if (!hidden) {
+          const activeNode = el.querySelector('.transcript-segment.wt-active');
+          if (activeNode && typeof activeNode.scrollIntoView === 'function') {
+            activeNode.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+          }
+        }
+        positionCaption();
       });
     }
     if (btnMinimize) {
@@ -1175,7 +1368,29 @@ export function buildStandaloneWalkthroughBundle(preferredVoice?: string): strin
         if (!panel) return;
         const minimized = panel.classList.toggle('wt-minimized');
         btnMinimize.textContent = minimized ? 'Expand' : 'Minimize';
+        positionCaption();
       });
+    }
+
+    // Observe bottom control dock layout/visibility changes so caption stays cleanly above controls
+    const controlDockEl = document.getElementById('control-dock');
+    const dockRestoreEl = document.getElementById('dock-restore-btn');
+    if (typeof window.MutationObserver !== 'undefined') {
+      const dockMutationObserver = new window.MutationObserver(function () {
+        positionCaption();
+      });
+      if (controlDockEl) {
+        dockMutationObserver.observe(controlDockEl, { attributes: true, attributeFilter: ['class', 'style'] });
+      }
+      if (dockRestoreEl) {
+        dockMutationObserver.observe(dockRestoreEl, { attributes: true, attributeFilter: ['class', 'style'] });
+      }
+    }
+    if (typeof window.ResizeObserver !== 'undefined' && controlDockEl) {
+      const dockResizeObserver = new window.ResizeObserver(function () {
+        positionCaption();
+      });
+      dockResizeObserver.observe(controlDockEl);
     }
 
     // Automatic delegated capture for any student control changes outside the walkthrough panel
@@ -1196,7 +1411,7 @@ export function buildStandaloneWalkthroughBundle(preferredVoice?: string): strin
       }
     });
 
-    // Reposition active tooltip on window resize
+    // Reposition active tooltip and caption on window resize
     window.addEventListener('resize', function () {
       if (primaryHighlightSelector && state.activeSegmentIndex >= 0) {
         const el = document.querySelector(primaryHighlightSelector);
@@ -1205,6 +1420,7 @@ export function buildStandaloneWalkthroughBundle(preferredVoice?: string): strin
           positionTooltip(el, seg.tooltip);
         }
       }
+      positionCaption();
     });
 
     // Pause cleanly if browser tab is hidden while playing so walkthrough clock does not drift
@@ -1239,6 +1455,7 @@ export function buildStandaloneWalkthroughBundle(preferredVoice?: string): strin
       resume: resume,
       stop: stop,
       seekToSegment: seekToSegment,
+      setCaptionsVisible: setCaptionsVisible,
       setPreferredVoice: function (voiceURI) {
         const nextVoice = typeof voiceURI === 'string' ? voiceURI : '';
         window.WALKTHROUGH_PREFERRED_VOICE = nextVoice;
@@ -1259,6 +1476,7 @@ export function buildStandaloneWalkthroughBundle(preferredVoice?: string): strin
           totalDurationMs: totalDurationMs,
           speechRate: state.speechRate,
           preferredVoice: state.preferredVoice,
+          captionsVisible: state.captionsVisible,
           speechSupported: speechSupported,
         };
       },

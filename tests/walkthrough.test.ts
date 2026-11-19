@@ -586,9 +586,15 @@ test('Reference Projectile Motion & Standalone Export: complete walkthrough, sim
     );
   }
 
-  // Verify non-blocking highlight styling & standalone speech synthesis are embedded
+  // Verify non-blocking highlight styling, hidden-by-default transcript, bottom captions, & standalone speech synthesis
   assert.match(pkg.html, /id="walkthrough-panel"/);
-  assert.match(pkg.html, /id="walkthrough-transcript"/);
+  assert.match(pkg.html, /id="walkthrough-transcript"\s+class="wt-hidden"/);
+  assert.match(pkg.html, /id="wt-btn-transcript"[^>]*>Show Transcript<\/button>/);
+  assert.match(pkg.html, /id="walkthrough-caption"/);
+  assert.match(pkg.html, /#walkthrough-caption\s*\{[\s\S]*background:\s*rgba\(0,\s*0,\s*0,\s*0\.5\);[\s\S]*color:\s*#ffffff;/);
+  assert.match(pkg.html, /id="wt-btn-captions"[^>]*>Hide Captions<\/button>/);
+  assert.match(pkg.html, /captionsVisible:\s*true/);
+  assert.match(pkg.html, /setCaptionsVisible:\s*setCaptionsVisible/);
   assert.match(pkg.html, /window\.speechSynthesis/);
   assert.match(pkg.html, /window\.WALKTHROUGH_STATE_CHECKPOINTS/);
   assert.match(pkg.html, /window\.WALKTHROUGH_INTERACTION_HISTORY/);
