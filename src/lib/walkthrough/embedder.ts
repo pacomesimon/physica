@@ -245,16 +245,13 @@ export function buildStandaloneWalkthroughBundle(preferredVoice?: string): strin
   }
 
   .wt-view-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
     gap: 5px;
     padding-top: 2px;
-    flex-wrap: wrap;
   }
 
   .wt-view-row .wt-mini-btn {
-    flex: 1 1 auto;
     text-align: center;
     padding: 4px 6px;
   }
@@ -459,6 +456,7 @@ export function buildStandaloneWalkthroughBundle(preferredVoice?: string): strin
         <button id="wt-btn-captions" class="wt-mini-btn wt-active-toggle" type="button" aria-pressed="true">Hide Captions</button>
         <button id="wt-btn-transcript" class="wt-mini-btn" type="button" aria-expanded="false">Show Transcript</button>
         <button id="wt-btn-music" class="wt-mini-btn wt-active-toggle" type="button" aria-pressed="true" title="Toggle background music">Music: On</button>
+        <button id="wt-btn-camera" class="wt-mini-btn wt-active-toggle" type="button" aria-pressed="true" title="Toggle guided tour camera motion">Camera: On</button>
       </div>
 
       <div id="wt-status-banner" class="wt-status-banner" role="status"></div>
@@ -602,6 +600,17 @@ export function buildStandaloneWalkthroughBundle(preferredVoice?: string): strin
         (config && typeof config.backgroundAudioUrl === 'string' && config.backgroundAudioUrl) ||
         ${safeBgAudioUrlLiteral},
       bgAudioFadeTimer: null,
+      cameraMotionEnabled: true,
+      camRafId: 0,
+      camSettleRafId: 0,
+      camElapsedSec: 0,
+      camRampSec: 0,
+      camLastFrameMs: 0,
+      camAnchorPos: null,
+      camAnchorTarget: null,
+      camLastAppliedPos: null,
+      camUserInteracting: false,
+      camReanchorTimer: null,
     };
 
     const bgAudioEl = document.getElementById('walkthrough-bg-audio');
@@ -670,6 +679,241 @@ export function buildStandaloneWalkthroughBundle(preferredVoice?: string): strin
         pauseBgAudio(false);
       } else if (state.status === 'playing') {
         startBgAudio();
+      }
+    }
+
+    // Video-like guided tour camera motion:
+    // Horizontal azimuth oscillates smoothly from -30 deg to +30 deg,
+    // with slightly noisy C2-smooth vertical elevation movements between -5 deg and +5 deg.
+    const CAM_TANH_NORM = Math.tanh(1.45);
+    const CAM_HORIZ_OMEGA = (Math.PI * 2) / 24;
+    const CAM_DEG2RAD = Math.PI / 180;
+
+    function camHash1D(n, seed) {
+      const v = Math.sin(n * 127.1 + seed * 311.7) * 43758.5453123;
+      return (v - Math.floor(v)) * 2 - 1;
+    }
+
+    function camSmoothNoise1D(x, seed) {
+      const i = Math.floor(x);
+      const u = x - i;
+      const s = u * u * u * (u * (u * 6 - 15) + 10);
+      const a = camHash1D(i, seed);
+      const b = camHash1D(i + 1, seed);
+      return a + (b - a) * s;
+    }
+
+    function computeCameraOffsets(elapsedSec, rampSec) {
+      const t = Math.max(0, elapsedSec);
+      const rampT = Math.min(1, Math.max(0, rampSec / 1.2));
+      const ease = rampT * rampT * (3 - 2 * rampT);
+
+      const horizDeg = 30 * Math.sin(t * CAM_HORIZ_OMEGA) * ease || 0;
+
+      const rawVert =
+        0.35 * Math.sin(t * 0.37 + 0.6) +
+        0.38 * camSmoothNoise1D(t * 0.28, 1.3) +
+        0.18 * camSmoothNoise1D(t * 0.72, 7.9) +
+        0.09 * camSmoothNoise1D(t * 1.65, 19.4);
+
+      const shapedVert = Math.tanh(rawVert * 1.45) / CAM_TANH_NORM;
+      const vertDeg = Math.max(-5, Math.min(5, 5 * shapedVert)) * ease || 0;
+
+      return { horizDeg: horizDeg, vertDeg: vertDeg };
+    }
+
+    function computeOrbitCameraPose(basePos, baseTarget, horizDeg, vertDeg) {
+      const dx = basePos[0] - baseTarget[0];
+      const dy = basePos[1] - baseTarget[1];
+      const dz = basePos[2] - baseTarget[2];
+      const radius = Math.hypot(dx, dy, dz);
+      if (radius < 1e-4) {
+        return [basePos[0], basePos[1], basePos[2]];
+      }
+      const baseAzimuth = Math.atan2(dx, dz);
+      const basePolar = Math.acos(Math.max(-1, Math.min(1, dy / radius)));
+      const nextAzimuth = baseAzimuth + horizDeg * CAM_DEG2RAD;
+      const nextPolar = Math.max(0.12, Math.min(Math.PI - 0.12, basePolar - vertDeg * CAM_DEG2RAD));
+      const sinPolar = Math.sin(nextPolar);
+      const nextX = baseTarget[0] + radius * sinPolar * Math.sin(nextAzimuth);
+      let nextY = baseTarget[1] + radius * Math.cos(nextPolar);
+      const nextZ = baseTarget[2] + radius * sinPolar * Math.cos(nextAzimuth);
+      if (basePos[1] > 0.35 && nextY < 0.35) {
+        nextY = 0.35;
+      }
+      return [nextX, nextY, nextZ];
+    }
+
+    function applyCameraPose(pos, target) {
+      if (!Array.isArray(pos) || pos.length !== 3) return;
+      state.suppressRecording = true;
+      try {
+        if (typeof simAPI.setCamera === 'function') {
+          simAPI.setCamera(pos, target);
+        } else if (window.camera && window.camera.position && typeof window.camera.position.set === 'function') {
+          window.camera.position.set(pos[0], pos[1], pos[2]);
+          if (target && window.controls && window.controls.target && typeof window.controls.target.set === 'function') {
+            window.controls.target.set(target[0], target[1], target[2]);
+          }
+          if (window.controls && typeof window.controls.update === 'function') {
+            window.controls.update();
+          }
+        }
+        state.camLastAppliedPos = [pos[0], pos[1], pos[2]];
+      } catch (e) {
+      } finally {
+        state.suppressRecording = false;
+      }
+    }
+
+    function readCurrentCamera() {
+      try {
+        const st = simAPI.getState();
+        if (
+          st &&
+          st.camera &&
+          Array.isArray(st.camera.position) &&
+          st.camera.position.length === 3 &&
+          Array.isArray(st.camera.target) &&
+          st.camera.target.length === 3
+        ) {
+          return {
+            position: [st.camera.position[0], st.camera.position[1], st.camera.position[2]],
+            target: [st.camera.target[0], st.camera.target[1], st.camera.target[2]],
+          };
+        }
+      } catch (e) {}
+      return null;
+    }
+
+    function captureCameraAnchor(resetPhase) {
+      const cam = readCurrentCamera();
+      if (!cam) return false;
+      state.camAnchorPos = cam.position;
+      state.camAnchorTarget = cam.target;
+      state.camLastAppliedPos = [cam.position[0], cam.position[1], cam.position[2]];
+      if (resetPhase) {
+        state.camElapsedSec = 0;
+        state.camRampSec = 0;
+      }
+      return true;
+    }
+
+    function userMovedCameraSinceLastApplied() {
+      if (!state.camLastAppliedPos) return true;
+      const cam = readCurrentCamera();
+      if (!cam) return false;
+      const dist = Math.hypot(
+        cam.position[0] - state.camLastAppliedPos[0],
+        cam.position[1] - state.camLastAppliedPos[1],
+        cam.position[2] - state.camLastAppliedPos[2]
+      );
+      return dist > 0.08;
+    }
+
+    function cancelCameraFrames() {
+      if (state.camRafId) {
+        cancelAnimationFrame(state.camRafId);
+        state.camRafId = 0;
+      }
+      if (state.camSettleRafId) {
+        cancelAnimationFrame(state.camSettleRafId);
+        state.camSettleRafId = 0;
+      }
+      if (state.camReanchorTimer) {
+        clearTimeout(state.camReanchorTimer);
+        state.camReanchorTimer = null;
+      }
+    }
+
+    function settleCameraToAnchor() {
+      if (!state.camAnchorPos || !state.camAnchorTarget || state.camUserInteracting) return;
+      const startCam = readCurrentCamera();
+      if (!startCam) return;
+      const fromPos = startCam.position;
+      const toPos = [state.camAnchorPos[0], state.camAnchorPos[1], state.camAnchorPos[2]];
+      const target = [state.camAnchorTarget[0], state.camAnchorTarget[1], state.camAnchorTarget[2]];
+      const startMs = performance.now();
+      const durationMs = 700;
+
+      function settleTick(now) {
+        if (state.status === 'playing' || state.camUserInteracting) {
+          state.camSettleRafId = 0;
+          return;
+        }
+        const ratio = Math.min(1, Math.max(0, (now - startMs) / durationMs));
+        const ease = 1 - Math.pow(1 - ratio, 3);
+        const pos = [
+          fromPos[0] + (toPos[0] - fromPos[0]) * ease,
+          fromPos[1] + (toPos[1] - fromPos[1]) * ease,
+          fromPos[2] + (toPos[2] - fromPos[2]) * ease,
+        ];
+        applyCameraPose(pos, target);
+        if (ratio < 1) {
+          state.camSettleRafId = requestAnimationFrame(settleTick);
+        } else {
+          state.camSettleRafId = 0;
+        }
+      }
+      state.camSettleRafId = requestAnimationFrame(settleTick);
+    }
+
+    function stopCameraMotion(settleBack) {
+      cancelCameraFrames();
+      if (settleBack) {
+        settleCameraToAnchor();
+      }
+    }
+
+    function startCameraMotion(resetPhase) {
+      cancelCameraFrames();
+      if (!state.cameraMotionEnabled || state.status !== 'playing') return;
+      if (typeof simAPI.setCamera !== 'function' && !(window.camera && window.camera.position)) return;
+
+      if (resetPhase || !state.camAnchorPos || userMovedCameraSinceLastApplied()) {
+        if (!captureCameraAnchor(true)) return;
+      }
+      state.camLastFrameMs = performance.now();
+
+      function camTick(now) {
+        if (state.status !== 'playing' || !state.cameraMotionEnabled) {
+          state.camRafId = 0;
+          return;
+        }
+        const dt = Math.min(0.05, Math.max(0, (now - state.camLastFrameMs) / 1000));
+        state.camLastFrameMs = now;
+
+        if (!state.camUserInteracting && state.camAnchorPos && state.camAnchorTarget) {
+          state.camElapsedSec += dt;
+          state.camRampSec += dt;
+          const offsets = computeCameraOffsets(state.camElapsedSec, state.camRampSec);
+          const nextPos = computeOrbitCameraPose(
+            state.camAnchorPos,
+            state.camAnchorTarget,
+            offsets.horizDeg,
+            offsets.vertDeg
+          );
+          applyCameraPose(nextPos, state.camAnchorTarget);
+        }
+
+        state.camRafId = requestAnimationFrame(camTick);
+      }
+
+      state.camRafId = requestAnimationFrame(camTick);
+    }
+
+    function setCameraMotionEnabled(enabled) {
+      state.cameraMotionEnabled = Boolean(enabled);
+      const btnCamera = document.getElementById('wt-btn-camera');
+      if (btnCamera) {
+        btnCamera.textContent = state.cameraMotionEnabled ? 'Camera: On' : 'Camera: Off';
+        btnCamera.setAttribute('aria-pressed', state.cameraMotionEnabled ? 'true' : 'false');
+        btnCamera.classList.toggle('wt-active-toggle', state.cameraMotionEnabled);
+      }
+      if (!state.cameraMotionEnabled) {
+        stopCameraMotion(false);
+      } else if (state.status === 'playing') {
+        startCameraMotion(true);
       }
     }
 
@@ -1189,6 +1433,7 @@ export function buildStandaloneWalkthroughBundle(preferredVoice?: string): strin
         stopTimers();
         pauseBgAudio(true);
         state.status = 'completed';
+        stopCameraMotion(true);
         state.walkthroughTimeMs = totalDurationMs;
         clearWalkthroughHighlights();
         updateUI(false);
@@ -1211,6 +1456,7 @@ export function buildStandaloneWalkthroughBundle(preferredVoice?: string): strin
       state.segmentElapsedBeforePauseMs = 0;
       captureCheckpoint('start', 0, segments[0].id);
       startBgAudio();
+      startCameraMotion(true);
       speakSegment(0, false);
     }
 
@@ -1219,6 +1465,7 @@ export function buildStandaloneWalkthroughBundle(preferredVoice?: string): strin
       state.status = 'paused';
       stopTimers();
       pauseBgAudio(false);
+      stopCameraMotion(false);
       state.segmentElapsedBeforePauseMs += Math.max(0, Date.now() - state.segmentPlayStartedWallMs);
       const seg = segments[state.activeSegmentIndex];
       if (seg) {
@@ -1244,6 +1491,7 @@ export function buildStandaloneWalkthroughBundle(preferredVoice?: string): strin
       state.segmentPlayStartedWallMs = Date.now();
       startProgressTicker();
       startBgAudio();
+      startCameraMotion(false);
 
       if (speechSupported && window.speechSynthesis.paused) {
         try {
@@ -1264,6 +1512,10 @@ export function buildStandaloneWalkthroughBundle(preferredVoice?: string): strin
       stopTimers();
       cancelSpeech();
       pauseBgAudio(true);
+      stopCameraMotion(false);
+      state.camAnchorPos = null;
+      state.camAnchorTarget = null;
+      state.camLastAppliedPos = null;
       clearWalkthroughHighlights();
       setBanner('');
 
@@ -1286,6 +1538,7 @@ export function buildStandaloneWalkthroughBundle(preferredVoice?: string): strin
       state.utteranceToken += 1;
       stopTimers();
       cancelSpeech();
+      stopCameraMotion(false);
 
       const targetMs = segmentStartsMs[index] || 0;
       state.activeSegmentIndex = index;
@@ -1303,6 +1556,7 @@ export function buildStandaloneWalkthroughBundle(preferredVoice?: string): strin
       if (autoPlay !== false) {
         state.status = 'playing';
         startBgAudio();
+        startCameraMotion(true);
         speakSegment(index, false);
       } else {
         state.status = 'paused';
@@ -1343,6 +1597,7 @@ export function buildStandaloneWalkthroughBundle(preferredVoice?: string): strin
     const btnCaptions = document.getElementById('wt-btn-captions');
     const btnCaptionClose = document.getElementById('wt-btn-caption-close');
     const btnMusic = document.getElementById('wt-btn-music');
+    const btnCamera = document.getElementById('wt-btn-camera');
     const btnMinimize = document.getElementById('wt-btn-minimize');
 
     if (btnPlay) btnPlay.addEventListener('click', play);
@@ -1393,6 +1648,11 @@ export function buildStandaloneWalkthroughBundle(preferredVoice?: string): strin
     if (btnMusic) {
       btnMusic.addEventListener('click', function () {
         setBgAudioMuted(!state.bgAudioMuted);
+      });
+    }
+    if (btnCamera) {
+      btnCamera.addEventListener('click', function () {
+        setCameraMotionEnabled(!state.cameraMotionEnabled);
       });
     }
     if (btnTranscript) {
@@ -1473,10 +1733,61 @@ export function buildStandaloneWalkthroughBundle(preferredVoice?: string): strin
       }
     });
 
+    // Yield camera motion whenever the user manually orbits or zooms the 3D canvas,
+    // then gently re-anchor around their new viewpoint when they release.
+    function scheduleCameraReanchor(delayMs) {
+      if (state.camReanchorTimer) clearTimeout(state.camReanchorTimer);
+      state.camReanchorTimer = setTimeout(function () {
+        state.camReanchorTimer = null;
+        state.camUserInteracting = false;
+        if (state.status === 'playing' && state.cameraMotionEnabled) {
+          captureCameraAnchor(true);
+        }
+      }, delayMs);
+    }
+
+    document.addEventListener('pointerdown', function (e) {
+      if (e.target && e.target.tagName === 'CANVAS') {
+        state.camUserInteracting = true;
+        if (state.camSettleRafId) {
+          cancelAnimationFrame(state.camSettleRafId);
+          state.camSettleRafId = 0;
+        }
+        if (state.camReanchorTimer) {
+          clearTimeout(state.camReanchorTimer);
+          state.camReanchorTimer = null;
+        }
+      }
+    });
+
+    window.addEventListener('pointerup', function () {
+      if (state.camUserInteracting) {
+        scheduleCameraReanchor(160);
+      }
+    });
+
+    window.addEventListener('pointercancel', function () {
+      if (state.camUserInteracting) {
+        scheduleCameraReanchor(160);
+      }
+    });
+
+    document.addEventListener('wheel', function (e) {
+      if (e.target && e.target.tagName === 'CANVAS') {
+        state.camUserInteracting = true;
+        if (state.camSettleRafId) {
+          cancelAnimationFrame(state.camSettleRafId);
+          state.camSettleRafId = 0;
+        }
+        scheduleCameraReanchor(450);
+      }
+    }, { passive: true });
+
     window.addEventListener('beforeunload', function () {
       stopTimers();
       cancelSpeech();
       pauseBgAudio(true);
+      stopCameraMotion(false);
     });
 
     // Allow Physica Studio host to update preferred narration voice live without reloading WebGL
@@ -1501,6 +1812,7 @@ export function buildStandaloneWalkthroughBundle(preferredVoice?: string): strin
       seekToSegment: seekToSegment,
       setCaptionsVisible: setCaptionsVisible,
       setBgAudioMuted: setBgAudioMuted,
+      setCameraMotionEnabled: setCameraMotionEnabled,
       setPreferredVoice: function (voiceURI) {
         const nextVoice = typeof voiceURI === 'string' ? voiceURI : '';
         window.WALKTHROUGH_PREFERRED_VOICE = nextVoice;
@@ -1524,6 +1836,7 @@ export function buildStandaloneWalkthroughBundle(preferredVoice?: string): strin
           captionsVisible: state.captionsVisible,
           bgAudioMuted: state.bgAudioMuted,
           bgAudioUrl: state.bgAudioUrl,
+          cameraMotionEnabled: state.cameraMotionEnabled,
           speechSupported: speechSupported,
         };
       },

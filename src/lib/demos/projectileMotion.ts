@@ -1514,6 +1514,16 @@ AGENT_GUIDANCE:
         updateVisualization();
       },
 
+      setCamera(position, target) {
+        if (Array.isArray(position) && position.length === 3) {
+          camera.position.set(position[0], position[1], position[2]);
+        }
+        if (Array.isArray(target) && target.length === 3) {
+          controls.target.set(target[0], target[1], target[2]);
+        }
+        controls.update();
+      },
+
       getParameters() {
         return { ...params };
       },

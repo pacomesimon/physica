@@ -35,6 +35,7 @@ CORE TECHNICAL REQUIREMENTS FOR GENERATED HTML:
    - Expose a standardized window.simulationAPI object with plain JSON-serializable state:
      - getState(): returns { time, running, parameters: { ... }, controls: { ... }, camera: { position: [x,y,z], target: [tx,ty,tz] } }
      - setState(state): restores parameters, syncs all DOM slider/checkbox/select inputs & formatted labels, restores simulation time/physics state deterministically, restores camera position & controls.target if present, and refreshes visuals.
+     - setCamera(position, target): updates camera.position and optional controls.target and calls controls.update() without resetting physics or clearing trails (used for smooth guided-tour camera motion).
      - getParameters(): returns a plain copy of current parameters.
      - setParameter(name, value): updates one parameter, syncs UI, and updates visuals.
      - play(), pause(), reset().

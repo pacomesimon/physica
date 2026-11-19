@@ -140,6 +140,95 @@ export function computeTotalDurationMs(segments: WalkthroughSegment[]): number {
   );
 }
 
+export interface WalkthroughCameraOffsets {
+  horizontalDeg: number; // -30° to +30°
+  verticalDeg: number; // -5° to +5°
+}
+
+function fract(x: number): number {
+  return x - Math.floor(x);
+}
+
+function hash1D(n: number, seed: number): number {
+  return fract(Math.sin(n * 127.1 + seed * 311.7) * 43758.5453123) * 2 - 1;
+}
+
+function smoothNoise1D(x: number, seed: number): number {
+  const i = Math.floor(x);
+  const u = x - i;
+  const s = u * u * u * (u * (u * 6 - 15) + 10);
+  const a = hash1D(i, seed);
+  const b = hash1D(i + 1, seed);
+  return a + (b - a) * s;
+}
+
+const TANH_NORM = Math.tanh(1.45);
+
+/**
+ * Computes video-like walkthrough camera offsets:
+ * - Horizontal azimuth smoothly oscillates from -30° to +30° (24s full cycle).
+ * - Vertical elevation applies slightly noisy, C2-smooth organic movement strictly within [-5°, +5°].
+ */
+export function computeWalkthroughCameraOffsets(
+  elapsedSec: number,
+  rampSec = elapsedSec
+): WalkthroughCameraOffsets {
+  const t = Math.max(0, Number(elapsedSec) || 0);
+  const rampT = Math.min(1, Math.max(0, (Number(rampSec) || 0) / 1.2));
+  const ease = rampT * rampT * (3 - 2 * rampT);
+
+  const horizOmega = (Math.PI * 2) / 24;
+  const horizontalDeg = 30 * Math.sin(t * horizOmega) * ease || 0;
+
+  const rawVert =
+    0.35 * Math.sin(t * 0.37 + 0.6) +
+    0.38 * smoothNoise1D(t * 0.28, 1.3) +
+    0.18 * smoothNoise1D(t * 0.72, 7.9) +
+    0.09 * smoothNoise1D(t * 1.65, 19.4);
+
+  const shapedVert = Math.tanh(rawVert * 1.45) / TANH_NORM;
+  const verticalDeg = Math.max(-5, Math.min(5, 5 * shapedVert)) * ease || 0;
+
+  return { horizontalDeg, verticalDeg };
+}
+
+/**
+ * Orbits a camera position around target by horizontal (azimuth) and vertical (elevation) degree offsets,
+ * preserving exact radial distance and keeping clear of poles and floor clipping.
+ */
+export function computeOrbitCameraPosition(
+  basePos: [number, number, number],
+  baseTarget: [number, number, number],
+  horizontalDeg: number,
+  verticalDeg: number
+): [number, number, number] {
+  const dx = basePos[0] - baseTarget[0];
+  const dy = basePos[1] - baseTarget[1];
+  const dz = basePos[2] - baseTarget[2];
+  const radius = Math.hypot(dx, dy, dz);
+  if (radius < 1e-4) {
+    return [basePos[0], basePos[1], basePos[2]];
+  }
+
+  const baseAzimuth = Math.atan2(dx, dz);
+  const basePolar = Math.acos(Math.max(-1, Math.min(1, dy / radius)));
+  const deg2rad = Math.PI / 180;
+
+  const nextAzimuth = baseAzimuth + horizontalDeg * deg2rad;
+  const nextPolar = Math.max(0.12, Math.min(Math.PI - 0.12, basePolar - verticalDeg * deg2rad));
+
+  const sinPolar = Math.sin(nextPolar);
+  const nextX = baseTarget[0] + radius * sinPolar * Math.sin(nextAzimuth);
+  let nextY = baseTarget[1] + radius * Math.cos(nextPolar);
+  const nextZ = baseTarget[2] + radius * sinPolar * Math.cos(nextAzimuth);
+
+  if (basePos[1] > 0.35 && nextY < 0.35) {
+    nextY = 0.35;
+  }
+
+  return [nextX, nextY, nextZ];
+}
+
 /**
  * Reusable selector-based GUI highlighter that never blocks pointer interaction.
  */

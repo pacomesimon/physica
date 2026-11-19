@@ -30,7 +30,7 @@ export function createSeededDoublePendulumProject(): SimulationProject {
   const now = Date.now();
   const metadata = parseSimulationMetadata(DOUBLE_PENDULUM_HTML);
   const initialVersion: SimulationVersion = {
-    id: 'ver-initial-double-pendulum-v3',
+    id: 'ver-initial-double-pendulum-v4',
     versionNumber: 1,
     description:
       'Initial reference simulation: 3D Double Pendulum with RK4 Lagrangian physics & energy telemetry',
@@ -256,7 +256,7 @@ export class LocalStorageRepository implements ProjectRepository {
             proj.versions.length === 1 &&
             proj.versions[0]?.id === 'ver-initial-projectile' &&
             typeof proj.currentHtml === 'string' &&
-            !/WALKTHROUGH_CONFIG/.test(proj.currentHtml)
+            (!/WALKTHROUGH_CONFIG/.test(proj.currentHtml) || !/setCamera\s*\(/.test(proj.currentHtml))
           ) {
             upgraded = true;
             return createSeededProjectileProject();
@@ -267,7 +267,8 @@ export class LocalStorageRepository implements ProjectRepository {
             Array.isArray(proj.versions) &&
             proj.versions.length === 1 &&
             (proj.versions[0]?.id === 'ver-initial-double-pendulum' ||
-              proj.versions[0]?.id === 'ver-initial-double-pendulum-v2')
+              proj.versions[0]?.id === 'ver-initial-double-pendulum-v2' ||
+              proj.versions[0]?.id === 'ver-initial-double-pendulum-v3')
           ) {
             upgraded = true;
             return createSeededDoublePendulumProject();

@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   BROWSER_DEFAULT_VOICE_VALUE,
+  computeOrbitCameraPosition,
+  computeWalkthroughCameraOffsets,
   HighlightManager,
   selectWalkthroughVoice,
   WalkthroughController,
@@ -601,7 +603,10 @@ test('Reference Projectile Motion & Standalone Export: complete walkthrough, sim
     /<audio id="walkthrough-bg-audio" loop preload="auto" src="https:\/\/cdn\.pixabay\.com\/download\/audio\/2026\/08\/01\/audio_0179371dfe\.mp3"/
   );
   assert.match(pkg.html, /id="wt-btn-music"[^>]*>Music: On<\/button>/);
+  assert.match(pkg.html, /id="wt-btn-camera"[^>]*>Camera: On<\/button>/);
   assert.match(pkg.html, /setBgAudioMuted:\s*setBgAudioMuted/);
+  assert.match(pkg.html, /setCameraMotionEnabled:\s*setCameraMotionEnabled/);
+  assert.match(pkg.html, /setCamera\s*\(position,\s*target\)/);
   assert.match(pkg.html, /captionsVisible:\s*true/);
   assert.match(pkg.html, /setCaptionsVisible:\s*setCaptionsVisible/);
   assert.match(pkg.html, /window\.speechSynthesis/);
@@ -689,4 +694,57 @@ test('Speech engine: default voice prioritizes Google US English (en-US), then G
     selectWalkthroughVoice(allVoices, BROWSER_DEFAULT_VOICE_VALUE, 'en-US')?.name,
     'Samantha'
   );
+});
+
+test('Guided tour camera motion: oscillates -30° to +30° horizontally with slightly noisy -5° to +5° vertical drift', () => {
+  // Starts cleanly at (0, 0) so clicking Play never snaps the camera
+  const start = computeWalkthroughCameraOffsets(0);
+  assert.equal(start.horizontalDeg, 0);
+  assert.equal(start.verticalDeg, 0);
+
+  let minH = Infinity;
+  let maxH = -Infinity;
+  let minV = Infinity;
+  let maxV = -Infinity;
+
+  for (let i = 0; i <= 600; i++) {
+    const t = i * 0.1; // 0s to 60s
+    const { horizontalDeg, verticalDeg } = computeWalkthroughCameraOffsets(t);
+    assert.ok(horizontalDeg >= -30.0001 && horizontalDeg <= 30.0001, `horizontal out of bounds: ${horizontalDeg}`);
+    assert.ok(verticalDeg >= -5.0001 && verticalDeg <= 5.0001, `vertical out of bounds: ${verticalDeg}`);
+    if (horizontalDeg < minH) minH = horizontalDeg;
+    if (horizontalDeg > maxH) maxH = horizontalDeg;
+    if (verticalDeg < minV) minV = verticalDeg;
+    if (verticalDeg > maxV) maxV = verticalDeg;
+  }
+
+  // Horizontal reaches full -30° and +30° peaks
+  assert.ok(minH <= -29.95, `Expected horizontal min near -30°, got ${minH}`);
+  assert.ok(maxH >= 29.95, `Expected horizontal max near +30°, got ${maxH}`);
+
+  // Vertical organically explores both negative and positive angles within [-5°, +5°]
+  assert.ok(minV < -1.5 && minV >= -5.0001, `Expected negative vertical motion within [-5°, 0], got ${minV}`);
+  assert.ok(maxV > 1.5 && maxV <= 5.0001, `Expected positive vertical motion within [0, +5°], got ${maxV}`);
+
+  // Vertical movement is non-periodic (slightly noisy), differing across identical horizontal phases
+  const cycleA = computeWalkthroughCameraOffsets(6.0);
+  const cycleB = computeWalkthroughCameraOffsets(30.0);
+  assert.ok(Math.abs(cycleA.horizontalDeg - cycleB.horizontalDeg) < 1e-6);
+  assert.ok(Math.abs(cycleA.verticalDeg - cycleB.verticalDeg) > 0.1);
+
+  // Spherical orbit preserves radial distance and hits exact +30° azimuth / ±5° elevation
+  const basePos: [number, number, number] = [0, 4.3, 12.0];
+  const target: [number, number, number] = [0, 3.6, 0];
+  const baseR = Math.hypot(basePos[0] - target[0], basePos[1] - target[1], basePos[2] - target[2]);
+
+  const orbitedRight = computeOrbitCameraPosition(basePos, target, 30, 0);
+  const rRight = Math.hypot(orbitedRight[0] - target[0], orbitedRight[1] - target[1], orbitedRight[2] - target[2]);
+  assert.ok(Math.abs(rRight - baseR) < 1e-6);
+  const azimDeg = (Math.atan2(orbitedRight[0] - target[0], orbitedRight[2] - target[2]) * 180) / Math.PI;
+  assert.ok(Math.abs(azimDeg - 30) < 1e-5);
+
+  const orbitedUp = computeOrbitCameraPosition(basePos, target, 0, 5);
+  const orbitedDown = computeOrbitCameraPosition(basePos, target, 0, -5);
+  assert.ok(orbitedUp[1] > basePos[1] + 0.8);
+  assert.ok(orbitedDown[1] < basePos[1] - 0.8 && orbitedDown[1] > 2.5);
 });

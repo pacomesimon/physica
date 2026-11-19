@@ -42,6 +42,7 @@ export interface SerializableSimulationState {
 export interface SimulationAPI {
   getState(): SerializableSimulationState;
   setState(state: SerializableSimulationState): void;
+  setCamera?(position: [number, number, number], target?: [number, number, number]): void;
   getParameters(): Record<string, number | boolean | string>;
   setParameter(name: string, value: number | boolean | string): void;
   play(): void;

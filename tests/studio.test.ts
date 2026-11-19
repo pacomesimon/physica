@@ -191,6 +191,8 @@ test('Default Double Pendulum simulation passes validation, walkthrough checks, 
   assert.equal(metadata.title, 'Double Pendulum');
   assert.equal(metadata.walkthroughTitle, 'Guided Tour: 3D Double Pendulum');
   assert.match(pkg.html, /id="walkthrough-bg-audio"/);
+  assert.match(pkg.html, /id="wt-btn-camera"/);
+  assert.match(pkg.html, /setCamera\s*\(position,\s*target\)/);
   assert.match(pkg.html, /const aFrameGroup = new THREE\.Group\(\);/);
   assert.match(pkg.html, /L1:\s*2\.0,\s*[\r\n]+\s*L2:\s*1\.0,/);
   assert.doesNotMatch(pkg.html, /chk-chaos-twin|protractorMesh|createProtractorTexture/);

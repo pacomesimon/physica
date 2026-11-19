@@ -966,7 +966,7 @@ AGENT_GUIDANCE:
     controls.dampingFactor = 0.06;
     controls.minDistance = 4;
     controls.maxDistance = 30;
-    controls.maxPolarAngle = Math.PI * 0.495;
+    controls.maxPolarAngle = Math.PI * 0.56;
     controls.update();
 
     // Studio 3-point lighting
@@ -1583,6 +1583,15 @@ AGENT_GUIDANCE:
         clearTrail();
         syncControlLabels();
         updateVisualization(true);
+      },
+      setCamera(position, target) {
+        if (Array.isArray(position) && position.length === 3) {
+          camera.position.set(position[0], position[1], position[2]);
+        }
+        if (Array.isArray(target) && target.length === 3) {
+          controls.target.set(target[0], target[1], target[2]);
+        }
+        controls.update();
       },
       getParameters() {
         return { ...params };
