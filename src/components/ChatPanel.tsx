@@ -22,12 +22,12 @@ interface ChatPanelProps {
 }
 
 const SUGGESTED_PROMPTS = [
+  'Create a 3D projectile motion simulation with velocity vectors and analytical range.',
   'Visualize the electric field around two oppositely charged particles in 3D.',
-  'Build an interactive double pendulum simulation with phase trails and energy readout.',
   'Show how changing mass affects acceleration of a block on an inclined plane with friction.',
-  'Add air resistance (quadratic drag) and compare ideal vs. drag trajectories.',
-  'Add a live kinetic vs. potential energy bar display to the current simulation.',
-  'Make the simulation playback 0.5x slower and highlight the velocity components vx and vy.',
+  'Add viscous damping to the double pendulum and show energy dissipation over time.',
+  'Add a live phase-space plot (θ₂ vs ω₂) to the current double pendulum simulation.',
+  'Make the simulation playback 0.5x slower and add angular acceleration readouts.',
 ];
 
 const RESPONSE_TYPE_LABEL: Record<string, string> = {

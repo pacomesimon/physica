@@ -3,6 +3,7 @@ import type {
   SimulationVersion,
   StudioSettings,
 } from '../types/simulation';
+import { DOUBLE_PENDULUM_HTML } from './demos/doublePendulum';
 import { PROJECTILE_MOTION_HTML } from './demos/projectileMotion';
 import { parseSimulationMetadata } from './metadataParser';
 
@@ -15,6 +16,7 @@ export interface ProjectRepository {
 
 const PROJECTS_STORAGE_KEY = 'physica_studio_projects_v1';
 const SETTINGS_STORAGE_KEY = 'physica_studio_settings_v1';
+const DEFAULT_DOUBLE_PENDULUM_MIGRATION_KEY = 'physica_studio_default_dp_v1';
 
 export const DEFAULT_SETTINGS: StudioSettings = {
   providerId: 'gemini',
@@ -23,6 +25,45 @@ export const DEFAULT_SETTINGS: StudioSettings = {
   autoSnapshot: true,
   walkthroughVoiceURI: '',
 };
+
+export function createSeededDoublePendulumProject(): SimulationProject {
+  const now = Date.now();
+  const metadata = parseSimulationMetadata(DOUBLE_PENDULUM_HTML);
+  const initialVersion: SimulationVersion = {
+    id: 'ver-initial-double-pendulum-v3',
+    versionNumber: 1,
+    description:
+      'Initial reference simulation: 3D Double Pendulum with RK4 Lagrangian physics & energy telemetry',
+    html: DOUBLE_PENDULUM_HTML,
+    createdAt: now,
+    source: 'initial',
+    metadata,
+  };
+
+  return {
+    id: 'proj-double-pendulum',
+    title: 'Double Pendulum',
+    subject: 'Classical Mechanics',
+    description:
+      'Interactive 3D nonlinear dynamics simulation demonstrating coupled double pendulum motion, motion trails, velocity vectors, and real-time mechanical energy conservation.',
+    currentHtml: DOUBLE_PENDULUM_HTML,
+    versions: [initialVersion],
+    messages: [
+      {
+        id: 'msg-welcome-dp',
+        role: 'assistant',
+        content:
+          'Loaded the 3D Double Pendulum simulation. Experiment with initial release angles, bob masses, rod lengths, and planetary gravity in the preview—or ask me to modify it (e.g., add viscous damping, plot a live phase-space diagram, or create a brand-new 3D physics simulation).',
+        createdAt: now,
+        responseType: 'explanation',
+        physicsAssumptions: metadata.physicalModel,
+        versionId: initialVersion.id,
+      },
+    ],
+    createdAt: now,
+    updatedAt: now,
+  };
+}
 
 export function createSeededProjectileProject(): SimulationProject {
   const now = Date.now();
@@ -199,14 +240,15 @@ export class LocalStorageRepository implements ProjectRepository {
     try {
       const raw = window.localStorage.getItem(PROJECTS_STORAGE_KEY);
       if (!raw) {
-        const seeded = [createSeededProjectileProject()];
+        const seeded = [createSeededDoublePendulumProject()];
         this.saveProjects(seeded);
+        window.localStorage.setItem(DEFAULT_DOUBLE_PENDULUM_MIGRATION_KEY, '1');
         return seeded;
       }
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed) && parsed.length > 0) {
         let upgraded = false;
-        const nextProjects = parsed.map((proj: SimulationProject) => {
+        let nextProjects: SimulationProject[] = parsed.map((proj: SimulationProject) => {
           if (
             proj &&
             proj.id === 'proj-projectile-motion' &&
@@ -219,18 +261,51 @@ export class LocalStorageRepository implements ProjectRepository {
             upgraded = true;
             return createSeededProjectileProject();
           }
+          if (
+            proj &&
+            proj.id === 'proj-double-pendulum' &&
+            Array.isArray(proj.versions) &&
+            proj.versions.length === 1 &&
+            (proj.versions[0]?.id === 'ver-initial-double-pendulum' ||
+              proj.versions[0]?.id === 'ver-initial-double-pendulum-v2')
+          ) {
+            upgraded = true;
+            return createSeededDoublePendulumProject();
+          }
           return proj;
         });
+
+        const migratedToDoublePendulum =
+          window.localStorage.getItem(DEFAULT_DOUBLE_PENDULUM_MIGRATION_KEY) === '1';
+
+        if (!migratedToDoublePendulum) {
+          const isOnlyUnmodifiedProjectile =
+            nextProjects.length === 1 &&
+            nextProjects[0]?.id === 'proj-projectile-motion' &&
+            nextProjects[0]?.versions?.length === 1 &&
+            nextProjects[0]?.versions[0]?.id === 'ver-initial-projectile';
+
+          if (isOnlyUnmodifiedProjectile) {
+            nextProjects = [createSeededDoublePendulumProject()];
+            upgraded = true;
+          } else if (!nextProjects.some((p) => p?.id === 'proj-double-pendulum')) {
+            nextProjects = [createSeededDoublePendulumProject(), ...nextProjects];
+            upgraded = true;
+          }
+          window.localStorage.setItem(DEFAULT_DOUBLE_PENDULUM_MIGRATION_KEY, '1');
+        }
+
         if (upgraded) {
           this.saveProjects(nextProjects);
         }
         return nextProjects;
       }
-      const seeded = [createSeededProjectileProject()];
+      const seeded = [createSeededDoublePendulumProject()];
       this.saveProjects(seeded);
+      window.localStorage.setItem(DEFAULT_DOUBLE_PENDULUM_MIGRATION_KEY, '1');
       return seeded;
     } catch {
-      return [createSeededProjectileProject()];
+      return [createSeededDoublePendulumProject()];
     }
   }
 

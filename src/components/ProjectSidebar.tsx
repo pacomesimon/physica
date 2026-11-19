@@ -113,7 +113,7 @@ export const ProjectSidebar: React.FC<ProjectSidebarProps> = ({
           className="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-md transition-colors whitespace-nowrap"
         >
           <RotateCcw className="w-3.5 h-3.5 shrink-0" />
-          <span>Load Projectile Demo</span>
+          <span>Load Double Pendulum Demo</span>
         </button>
 
         <button

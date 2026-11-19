@@ -10,7 +10,7 @@ import { parseSimulationMetadata } from './lib/metadataParser';
 import {
   createBlankProject,
   createNextVersion,
-  createSeededProjectileProject,
+  createSeededDoublePendulumProject,
   LocalStorageRepository,
 } from './lib/storage';
 import type {
@@ -132,7 +132,7 @@ export default function App() {
   };
 
   const handleRestoreDemo = () => {
-    const demo = createSeededProjectileProject();
+    const demo = createSeededDoublePendulumProject();
     demo.id = `proj-demo-${Date.now()}`;
     setProjects((prev) => [demo, ...prev]);
     setActiveProjectId(demo.id);
@@ -143,7 +143,7 @@ export default function App() {
     setProjects((prev) => {
       const remaining = prev.filter((p) => p.id !== id);
       if (remaining.length === 0) {
-        const seeded = createSeededProjectileProject();
+        const seeded = createSeededDoublePendulumProject();
         setActiveProjectId(seeded.id);
         return [seeded];
       }

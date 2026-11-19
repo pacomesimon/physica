@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  computeDoublePendulumEnergy,
+  DOUBLE_PENDULUM_HTML,
+  stepDoublePendulumRK4,
+} from '../src/lib/demos/doublePendulum.ts';
+import {
   calculateProjectileAnalyticalMetrics,
   calculateProjectilePosition,
   calculateProjectileVelocity,
@@ -10,7 +15,11 @@ import { injectPreviewBridge, stripPreviewBridge } from '../src/lib/bridgeInject
 import { prepareStandaloneExport, slugifyFilename } from '../src/lib/exporter.ts';
 import { validateSimulationHtml } from '../src/lib/htmlValidator.ts';
 import { parseSimulationMetadata } from '../src/lib/metadataParser.ts';
-import { createNextVersion, createSeededProjectileProject } from '../src/lib/storage.ts';
+import {
+  createNextVersion,
+  createSeededDoublePendulumProject,
+  createSeededProjectileProject,
+} from '../src/lib/storage.ts';
 import {
   normalizeAgentResponse,
   parseAgentEnvelope,
@@ -135,4 +144,54 @@ test('Agent envelope parser extracts delimited metadata JSON and raw standalone 
   assert.equal(normalized.summary, 'Created Double Pendulum simulation.');
   assert.ok(normalized.html?.includes('<title>Double Pendulum</title>'));
   assert.equal(validateSimulationHtml(normalized.html || '').valid, true);
+});
+
+test('Double Pendulum RK4 physics conserves mechanical energy and demonstrates chaotic divergence', () => {
+  const params = { m1: 1.5, m2: 1.2, L1: 2.0, L2: 1.8, g: 9.81 };
+  const deg2rad = Math.PI / 180;
+  let primary = { theta1: 125 * deg2rad, theta2: 140 * deg2rad, omega1: 0, omega2: 0 };
+  let twin = { theta1: 125.05 * deg2rad, theta2: 140 * deg2rad, omega1: 0, omega2: 0 };
+
+  const initialEnergy = computeDoublePendulumEnergy(primary, params).total;
+  assert.ok(initialEnergy > 0);
+
+  const dt = 1 / 240;
+  // Integrate 8 seconds of chaotic high-energy motion
+  for (let i = 0; i < 240 * 8; i++) {
+    primary = stepDoublePendulumRK4(primary, params, dt);
+    twin = stepDoublePendulumRK4(twin, params, dt);
+  }
+
+  const finalEnergy = computeDoublePendulumEnergy(primary, params).total;
+  const relDrift = Math.abs(finalEnergy - initialEnergy) / initialEnergy;
+  assert.ok(relDrift < 1e-4, `Expected relative energy drift < 0.01%, got ${(relDrift * 100).toFixed(5)}%`);
+
+  // Chaos twin started 0.05 deg apart and should diverge substantially within 8 seconds
+  const angleSeparationDeg = Math.abs((primary.theta2 - twin.theta2) * (180 / Math.PI));
+  assert.ok(angleSeparationDeg > 10, `Expected chaotic divergence > 10 deg, got ${angleSeparationDeg.toFixed(2)} deg`);
+});
+
+test('Default Double Pendulum simulation passes validation, walkthrough checks, and standalone export', () => {
+  const project = createSeededDoublePendulumProject();
+  assert.equal(project.id, 'proj-double-pendulum');
+  assert.equal(project.title, 'Double Pendulum');
+
+  const pkg = prepareStandaloneExport(DOUBLE_PENDULUM_HTML, project.title);
+  assert.equal(pkg.validation.valid, true, `Validation errors: ${pkg.validation.errors.join('; ')}`);
+  assert.equal(pkg.validation.hasThreeJs, true);
+  assert.equal(pkg.validation.hasMetadata, true);
+  assert.equal(pkg.validation.sectionCount, 10);
+  assert.equal(pkg.validation.hasWalkthroughConfig, true);
+  assert.equal(pkg.validation.hasSimulationApi, true);
+  assert.equal(pkg.validation.hasWalkthroughEngine, true);
+  assert.equal(pkg.validation.walkthroughSegmentCount, 6);
+  assert.deepEqual(pkg.validation.missingHighlightSelectors, []);
+
+  const metadata = parseSimulationMetadata(pkg.html);
+  assert.equal(metadata.title, 'Double Pendulum');
+  assert.equal(metadata.walkthroughTitle, 'Guided Tour: 3D Double Pendulum');
+  assert.match(pkg.html, /id="walkthrough-bg-audio"/);
+  assert.match(pkg.html, /const aFrameGroup = new THREE\.Group\(\);/);
+  assert.match(pkg.html, /L1:\s*2\.0,\s*[\r\n]+\s*L2:\s*1\.0,/);
+  assert.doesNotMatch(pkg.html, /chk-chaos-twin|protractorMesh|createProtractorTexture/);
 });
