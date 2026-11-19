@@ -31,6 +31,20 @@ export const EXPECTED_JS_SECTIONS: Array<{ number: number; title: string }> = [
   { number: 10, title: 'CLEANUP AND RESET' },
 ];
 
+export const EXPECTED_WALKTHROUGH_SECTIONS: string[] = [
+  'SIMULATION_METADATA',
+  'PHYSICAL_MODEL',
+  'SIMULATION_STATE_SCHEMA',
+  'SIMULATION_API',
+  'WALKTHROUGH_METADATA',
+  'WALKTHROUGH_TRANSCRIPT',
+  'WALKTHROUGH_SEGMENTS',
+  'WALKTHROUGH_HIGHLIGHT_TARGETS',
+  'WALKTHROUGH_STATE_CHECKPOINTS',
+  'WALKTHROUGH_INTERACTION_HISTORY',
+  'WALKTHROUGH_PLAYBACK_ENGINE',
+];
+
 export function detectPresentSections(html: string): number[] {
   const present: number[] = [];
   for (const section of EXPECTED_JS_SECTIONS) {
@@ -42,7 +56,25 @@ export function detectPresentSections(html: string): number[] {
   return present;
 }
 
+export function detectWalkthroughDocSections(html: string): string[] {
+  return EXPECTED_WALKTHROUGH_SECTIONS.filter((sec) => new RegExp(`\\b${sec}\\b`).test(html));
+}
+
+export function countWalkthroughSegments(html: string): number {
+  const configMatch = html.match(/WALKTHROUGH_CONFIG\s*=\s*\{[\s\S]*?segments\s*:\s*\[([\s\S]*?)\]\s*,?\s*\}/);
+  if (!configMatch?.[1]) return 0;
+  const idMatches = configMatch[1].match(/\bid\s*:\s*['"][^'"]+['"]/g);
+  return idMatches ? idMatches.length : 0;
+}
+
+export function extractWalkthroughTitle(html: string): string | undefined {
+  const match = html.match(/WALKTHROUGH_CONFIG\s*=\s*\{[\s\S]*?\btitle\s*:\s*['"]([^'"]+)['"]/);
+  return match?.[1]?.trim();
+}
+
 export function parseSimulationMetadata(html: string): SimulationMetadata {
+  const walkthroughSegmentCount = countWalkthroughSegments(html);
+  const walkthroughDocSections = detectWalkthroughDocSections(html);
   const metadata: SimulationMetadata = {
     title: 'Untitled Simulation',
     subject: 'Physics',
@@ -58,6 +90,11 @@ export function parseSimulationMetadata(html: string): SimulationMetadata {
     agentGuidance: [],
     hasStructuredHeader: false,
     presentSections: detectPresentSections(html),
+    hasWalkthrough: /WALKTHROUGH_CONFIG/.test(html),
+    walkthroughTitle: extractWalkthroughTitle(html),
+    walkthroughSegmentCount,
+    hasSimulationApi: /window\.simulationAPI\b/.test(html),
+    walkthroughDocSections,
   };
 
   const commentMatch = html.match(/<!--[\s\S]*?SIMULATION_METADATA([\s\S]*?)-->/);
@@ -74,6 +111,7 @@ export function parseSimulationMetadata(html: string): SimulationMetadata {
   const lines = block.split(/\r?\n/);
 
   let currentListProp: keyof SimulationMetadata | null = null;
+  let inPreamble = true;
 
   for (const rawLine of lines) {
     const line = rawLine.trim();
@@ -82,6 +120,14 @@ export function parseSimulationMetadata(html: string): SimulationMetadata {
     const matchedSection = LIST_SECTIONS.find((sec) => line.startsWith(`${sec.header}:`));
     if (matchedSection) {
       currentListProp = matchedSection.prop;
+      inPreamble = false;
+      continue;
+    }
+
+    // Any other uppercase metadata section header (e.g. SIMULATION_STATE_SCHEMA:, WALKTHROUGH_METADATA:, WALKTHROUGH_TRANSCRIPT:)
+    if (/^[A-Z][A-Z0-9_]+:/.test(line)) {
+      currentListProp = null;
+      inPreamble = false;
       continue;
     }
 
@@ -93,12 +139,14 @@ export function parseSimulationMetadata(html: string): SimulationMetadata {
       continue;
     }
 
-    const matchedField = KEY_VALUE_FIELDS.find((f) => line.startsWith(`${f.key}:`));
-    if (matchedField) {
-      currentListProp = null;
-      const value = line.slice(matchedField.key.length + 1).trim();
-      if (value) {
-        (metadata[matchedField.prop] as string) = value;
+    if (inPreamble) {
+      const matchedField = KEY_VALUE_FIELDS.find((f) => line.startsWith(`${f.key}:`));
+      if (matchedField) {
+        currentListProp = null;
+        const value = line.slice(matchedField.key.length + 1).trim();
+        if (value) {
+          (metadata[matchedField.prop] as string) = value;
+        }
       }
     }
   }

@@ -1,3 +1,5 @@
+import { ensureWalkthroughEmbedded } from '../walkthrough/embedder.ts';
+
 export interface ProjectilePosition {
   x: number;
   y: number;
@@ -81,7 +83,7 @@ export function calculateProjectileAnalyticalMetrics(
   };
 }
 
-export const PROJECTILE_MOTION_HTML = `<!--
+const RAW_PROJECTILE_MOTION_HTML = `<!--
 SIMULATION_METADATA
 Title: Projectile Motion
 Subject: Classical Mechanics
@@ -130,12 +132,34 @@ SIMULATION_CONTROLS:
 - Parameter adjustment sliders
 - Vector & predicted curve visibility toggles
 
+SIMULATION_STATE_SCHEMA:
+- time: number (elapsed simulation time in seconds)
+- running: boolean (whether physics integration is advancing)
+- landed: boolean (whether projectile has impacted ground y = 0)
+- parameters: { x0, y0, v0, angleDeg, g, timeScale, showVectors, showPredictedArc }
+- controls: { showVectors, showPredictedArc, timeScale }
+- camera: { position: [x, y, z], target: [x, y, z] }
+
+WALKTHROUGH_METADATA:
+- Title: Guided Tour: 3D Projectile Motion
+- Language: en-US
+- Segments: 6 structured narration segments (Introduction, Interface Orientation, Velocity & Angle, Gravity & Vectors, Equations & Telemetry, Independent Exploration)
+- Narration Engine: Native browser SpeechSynthesis API with synchronized transcript fallback
+
+WALKTHROUGH_TRANSCRIPT:
+- Segment 1 (intro): Overview of 2D projectile motion under uniform gravity.
+- Segment 2 (interface): Orientation to simulation playback and speed controls.
+- Segment 3 (velocity-angle): Guided experiment with initial velocity and launch angle.
+- Segment 4 (gravity-vectors): Comparing planetary gravity presets and live vector arrows.
+- Segment 5 (telemetry-equations): Connecting instantaneous velocity readouts to governing equations.
+- Segment 6 (conclusion): Independent experimentation with launch height and predicted trajectory.
+
 AGENT_GUIDANCE:
 - Physical calculations are implemented strictly inside Section 3 (PHYSICS MODEL).
 - Visual representation and Three.js transforms are implemented separately in Sections 5 and 7.
-- Do not modify visual scaling when changing physical parameters.
+- Keep window.simulationAPI and window.WALKTHROUGH_CONFIG synchronized whenever controls or parameters change.
+- Keep top-right viewport clear for #walkthrough-panel; stack telemetry & equations on top-left and parameter controls in #control-dock.
 - Keep SI physical units consistent (meters, seconds, m/s, m/s^2, degrees).
-- Update dependent visual elements whenever simulation parameters change.
 -->
 <!DOCTYPE html>
 <html lang="en">
@@ -184,51 +208,70 @@ AGENT_GUIDANCE:
       height: 100%;
     }
 
-    .hud-panel {
+    #left-hud-stack {
       position: fixed;
+      top: 14px;
+      left: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      width: 268px;
+      max-height: calc(100vh - 186px);
+      overflow-y: auto;
+      z-index: 12;
+      pointer-events: none;
+    }
+
+    .hud-panel {
       background: var(--bg-hud);
       border: 1px solid var(--border-hud);
       border-radius: 10px;
       color: var(--text-main);
       font-size: 12px;
       line-height: 1.45;
-      z-index: 10;
       box-shadow: 0 8px 24px rgba(2, 6, 23, 0.35);
+      pointer-events: auto;
     }
 
     #telemetry-panel {
-      top: 14px;
-      left: 14px;
-      padding: 12px 14px;
-      min-width: 248px;
-      max-width: 280px;
+      padding: 11px 13px;
     }
 
     .panel-header {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 12px;
+      gap: 10px;
       margin-bottom: 8px;
       padding-bottom: 6px;
       border-bottom: 1px solid rgba(148, 163, 184, 0.16);
     }
 
     .panel-title {
-      font-size: 13px;
+      font-size: 12.5px;
       font-weight: 600;
       letter-spacing: -0.01em;
     }
 
     .panel-subtitle {
-      font-size: 11px;
+      font-size: 10.5px;
       color: var(--text-muted);
     }
 
     .telemetry-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      gap: 6px 12px;
+      gap: 6px 10px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .telemetry-band {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px 10px;
+      margin-top: 6px;
+      padding-top: 6px;
+      border-top: 1px solid rgba(148, 163, 184, 0.12);
       font-variant-numeric: tabular-nums;
     }
 
@@ -244,7 +287,7 @@ AGENT_GUIDANCE:
 
     .metric-value {
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      font-size: 12px;
+      font-size: 11.5px;
       font-weight: 600;
       color: #f1f5f9;
     }
@@ -252,11 +295,11 @@ AGENT_GUIDANCE:
     .legend-row {
       display: flex;
       align-items: center;
-      gap: 12px;
-      margin-top: 10px;
-      padding-top: 8px;
+      gap: 10px;
+      margin-top: 8px;
+      padding-top: 7px;
       border-top: 1px solid rgba(148, 163, 184, 0.16);
-      font-size: 11px;
+      font-size: 10.5px;
       color: var(--text-muted);
     }
 
@@ -267,16 +310,13 @@ AGENT_GUIDANCE:
     }
 
     .swatch-bar {
-      width: 12px;
+      width: 11px;
       height: 3px;
       border-radius: 2px;
     }
 
     #equations-panel {
-      top: 14px;
-      right: 14px;
-      padding: 12px 14px;
-      width: 284px;
+      padding: 10px 13px;
     }
 
     .eq-toggle-btn {
@@ -285,7 +325,7 @@ AGENT_GUIDANCE:
       color: var(--text-muted);
       border-radius: 6px;
       padding: 2px 8px;
-      font-size: 11px;
+      font-size: 10.5px;
       cursor: pointer;
     }
 
@@ -297,9 +337,9 @@ AGENT_GUIDANCE:
     .eq-list {
       display: flex;
       flex-direction: column;
-      gap: 5px;
+      gap: 4px;
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      font-size: 11px;
+      font-size: 10.5px;
       color: #cbd5e1;
     }
 
@@ -310,17 +350,19 @@ AGENT_GUIDANCE:
     }
 
     .assumptions {
-      margin-top: 8px;
-      font-size: 11px;
+      margin-top: 7px;
+      font-size: 10.5px;
       color: var(--text-muted);
     }
 
     #control-dock {
-      bottom: 16px;
+      position: fixed;
+      bottom: 14px;
       left: 50%;
       transform: translateX(-50%);
       width: min(880px, calc(100vw - 28px));
-      padding: 12px 16px;
+      padding: 11px 15px;
+      z-index: 15;
       transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
     }
 
@@ -333,7 +375,7 @@ AGENT_GUIDANCE:
       bottom: 14px;
       left: 50%;
       transform: translateX(-50%);
-      z-index: 9;
+      z-index: 14;
       display: none;
       padding: 6px 14px;
       background: var(--bg-hud);
@@ -350,8 +392,8 @@ AGENT_GUIDANCE:
       align-items: center;
       justify-content: space-between;
       gap: 8px;
-      margin-bottom: 10px;
-      padding-bottom: 10px;
+      margin-bottom: 9px;
+      padding-bottom: 9px;
       border-bottom: 1px solid rgba(148, 163, 184, 0.16);
     }
 
@@ -367,8 +409,8 @@ AGENT_GUIDANCE:
       border: 1px solid rgba(148, 163, 184, 0.25);
       color: #f8fafc;
       border-radius: 6px;
-      padding: 6px 12px;
-      font-size: 12px;
+      padding: 5px 11px;
+      font-size: 11.5px;
       font-weight: 500;
       cursor: pointer;
       white-space: nowrap;
@@ -390,14 +432,16 @@ AGENT_GUIDANCE:
 
     .sliders-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(155px, 1fr));
-      gap: 10px 14px;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 9px 14px;
     }
 
     .slider-control {
       display: flex;
       flex-direction: column;
       gap: 4px;
+      padding: 3px 5px;
+      border-radius: 6px;
     }
 
     .slider-label-row {
@@ -427,7 +471,7 @@ AGENT_GUIDANCE:
     .toggles-row {
       display: flex;
       align-items: center;
-      gap: 14px;
+      gap: 12px;
       flex-wrap: wrap;
       font-size: 11px;
       color: #cbd5e1;
@@ -439,6 +483,8 @@ AGENT_GUIDANCE:
       gap: 5px;
       cursor: pointer;
       user-select: none;
+      padding: 2px 4px;
+      border-radius: 5px;
     }
 
     select.ctrl-select {
@@ -452,12 +498,11 @@ AGENT_GUIDANCE:
     }
 
     @media (max-width: 720px) {
+      #left-hud-stack {
+        width: 215px;
+      }
       #equations-panel {
         display: none;
-      }
-      #telemetry-panel {
-        min-width: 200px;
-        padding: 9px 11px;
       }
     }
   </style>
@@ -465,103 +510,113 @@ AGENT_GUIDANCE:
 <body>
   <div id="canvas-container"></div>
 
-  <aside id="telemetry-panel" class="hud-panel" aria-label="Instantaneous Kinematics">
-    <div class="panel-header">
-      <div>
-        <div class="panel-title">Projectile Motion</div>
-        <div class="panel-subtitle">2D Kinematics · SI Units</div>
+  <div id="left-hud-stack">
+    <aside id="telemetry-panel" class="hud-panel" aria-label="Instantaneous Kinematics">
+      <div class="panel-header">
+        <div>
+          <div class="panel-title">Projectile Motion</div>
+          <div class="panel-subtitle">2D Kinematics · SI Units</div>
+        </div>
       </div>
-    </div>
-    <div class="telemetry-grid">
-      <div class="metric-item">
-        <span class="metric-label">Time t</span>
-        <span class="metric-value" id="val-t">0.00 s</span>
+      <div class="telemetry-grid">
+        <div class="metric-item">
+          <span class="metric-label">Time t</span>
+          <span class="metric-value" id="val-t">0.00 s</span>
+        </div>
+        <div class="metric-item">
+          <span class="metric-label">Speed |v|</span>
+          <span class="metric-value" id="val-speed">0.00 m/s</span>
+        </div>
+        <div class="metric-item">
+          <span class="metric-label">Position x(t)</span>
+          <span class="metric-value" id="val-x">0.00 m</span>
+        </div>
+        <div class="metric-item">
+          <span class="metric-label">Altitude y(t)</span>
+          <span class="metric-value" id="val-y">0.00 m</span>
+        </div>
       </div>
-      <div class="metric-item">
-        <span class="metric-label">Speed |v|</span>
-        <span class="metric-value" id="val-speed">0.00 m/s</span>
+      <div id="telemetry-velocity" class="telemetry-band">
+        <div class="metric-item">
+          <span class="metric-label">Velocity vx</span>
+          <span class="metric-value" id="val-vx">0.00 m/s</span>
+        </div>
+        <div class="metric-item">
+          <span class="metric-label">Velocity vy</span>
+          <span class="metric-value" id="val-vy">0.00 m/s</span>
+        </div>
       </div>
-      <div class="metric-item">
-        <span class="metric-label">Position x(t)</span>
-        <span class="metric-value" id="val-x">0.00 m</span>
+      <div id="telemetry-range" class="telemetry-band">
+        <div class="metric-item">
+          <span class="metric-label">Predicted Range</span>
+          <span class="metric-value" id="val-range">0.00 m</span>
+        </div>
+        <div class="metric-item">
+          <span class="metric-label">Max Height</span>
+          <span class="metric-value" id="val-hmax">0.00 m</span>
+        </div>
       </div>
-      <div class="metric-item">
-        <span class="metric-label">Altitude y(t)</span>
-        <span class="metric-value" id="val-y">0.00 m</span>
+      <div class="legend-row">
+        <span class="legend-swatch">
+          <span class="swatch-bar" style="background: #22c55e;"></span>
+          Velocity v(t)
+        </span>
+        <span class="legend-swatch">
+          <span class="swatch-bar" style="background: #ef4444;"></span>
+          Gravity g
+        </span>
+        <span class="legend-swatch">
+          <span class="swatch-bar" style="background: #38bdf8;"></span>
+          Path
+        </span>
       </div>
-      <div class="metric-item">
-        <span class="metric-label">Velocity vx</span>
-        <span class="metric-value" id="val-vx">0.00 m/s</span>
-      </div>
-      <div class="metric-item">
-        <span class="metric-label">Velocity vy</span>
-        <span class="metric-value" id="val-vy">0.00 m/s</span>
-      </div>
-      <div class="metric-item">
-        <span class="metric-label">Predicted Range</span>
-        <span class="metric-value" id="val-range">0.00 m</span>
-      </div>
-      <div class="metric-item">
-        <span class="metric-label">Max Height</span>
-        <span class="metric-value" id="val-hmax">0.00 m</span>
-      </div>
-    </div>
-    <div class="legend-row">
-      <span class="legend-swatch">
-        <span class="swatch-bar" style="background: #22c55e;"></span>
-        Velocity v(t)
-      </span>
-      <span class="legend-swatch">
-        <span class="swatch-bar" style="background: #ef4444;"></span>
-        Gravity g
-      </span>
-      <span class="legend-swatch">
-        <span class="swatch-bar" style="background: #38bdf8;"></span>
-        Path
-      </span>
-    </div>
-  </aside>
+    </aside>
 
-  <aside id="equations-panel" class="hud-panel" aria-label="Governing Equations">
-    <div class="panel-header">
-      <span class="panel-title">Governing Equations</span>
-      <button id="btn-toggle-eq" class="eq-toggle-btn" type="button">Hide</button>
-    </div>
-    <div id="eq-body">
-      <div class="eq-list">
-        <div class="eq-line">x(t) = x₀ + v₀ cos(θ) · t</div>
-        <div class="eq-line">y(t) = y₀ + v₀ sin(θ) · t − ½ g t²</div>
-        <div class="eq-line">vₓ(t) = v₀ cos(θ)</div>
-        <div class="eq-line">vᵧ(t) = v₀ sin(θ) − g · t</div>
+    <aside id="equations-panel" class="hud-panel" aria-label="Governing Equations">
+      <div class="panel-header">
+        <span class="panel-title">Governing Equations</span>
+        <button id="btn-toggle-eq" class="eq-toggle-btn" type="button">Hide</button>
       </div>
-      <p class="assumptions">
-        Assumptions: Uniform gravity along −Y, flat ground at y = 0 m, negligible air resistance. Drag scene to orbit, scroll to zoom.
-      </p>
-    </div>
-  </aside>
+      <div id="eq-body">
+        <div class="eq-list">
+          <div class="eq-line">x(t) = x₀ + v₀ cos(θ) · t</div>
+          <div class="eq-line">y(t) = y₀ + v₀ sin(θ) · t − ½ g t²</div>
+          <div class="eq-line">vₓ(t) = v₀ cos(θ)</div>
+          <div class="eq-line">vᵧ(t) = v₀ sin(θ) − g · t</div>
+        </div>
+        <p class="assumptions">
+          Uniform gravity along −Y, flat ground at y = 0 m, negligible drag. Drag to orbit, scroll to zoom.
+        </p>
+      </div>
+    </aside>
+  </div>
 
   <button id="dock-restore-btn" type="button">Show Controls</button>
 
   <section id="control-dock" class="hud-panel" aria-label="Simulation Controls">
     <div class="dock-top-row">
       <div class="btn-group">
-        <button id="btn-play-pause" class="ctrl-btn primary" type="button">Pause</button>
-        <button id="btn-launch" class="ctrl-btn" type="button">Re-launch</button>
-        <button id="btn-reset" class="ctrl-btn" type="button">Reset</button>
-        <select id="select-gravity-preset" class="ctrl-select" aria-label="Gravity environment preset">
-          <option value="9.81">Earth (9.81 m/s²)</option>
-          <option value="1.62">Moon (1.62 m/s²)</option>
-          <option value="3.71">Mars (3.71 m/s²)</option>
-          <option value="24.79">Jupiter (24.79 m/s²)</option>
-        </select>
+        <div id="playback-controls" class="btn-group">
+          <button id="btn-play-pause" class="ctrl-btn primary" type="button">Pause</button>
+          <button id="btn-launch" class="ctrl-btn" type="button">Re-launch</button>
+          <button id="btn-reset" class="ctrl-btn" type="button">Reset</button>
+        </div>
+        <div id="gravity-preset-control">
+          <select id="select-gravity-preset" data-param="g" class="ctrl-select" aria-label="Gravity environment preset">
+            <option value="9.81">Earth (9.81 m/s²)</option>
+            <option value="1.62">Moon (1.62 m/s²)</option>
+            <option value="3.71">Mars (3.71 m/s²)</option>
+            <option value="24.79">Jupiter (24.79 m/s²)</option>
+          </select>
+        </div>
       </div>
       <div class="toggles-row">
-        <label class="toggle-label">
-          <input id="chk-vectors" type="checkbox" checked />
+        <label id="vectors-control" class="toggle-label">
+          <input id="chk-vectors" data-param="showVectors" type="checkbox" checked />
           Vectors
         </label>
-        <label class="toggle-label">
-          <input id="chk-predicted" type="checkbox" checked />
+        <label id="predicted-control" class="toggle-label">
+          <input id="chk-predicted" data-param="showPredictedArc" type="checkbox" checked />
           Predicted Arc
         </label>
         <button id="btn-hide-dock" class="eq-toggle-btn" type="button">Hide Controls</button>
@@ -569,44 +624,44 @@ AGENT_GUIDANCE:
     </div>
 
     <div class="sliders-grid">
-      <div class="slider-control">
+      <div id="velocity-control" class="slider-control">
         <div class="slider-label-row">
           <span>Initial Velocity v₀</span>
           <span id="lbl-v0">24.0 m/s</span>
         </div>
-        <input id="slider-v0" type="range" min="5" max="45" step="0.5" value="24" />
+        <input id="slider-v0" data-param="v0" type="range" min="5" max="45" step="0.5" value="24" />
       </div>
 
-      <div class="slider-control">
+      <div id="angle-control" class="slider-control">
         <div class="slider-label-row">
           <span>Launch Angle θ</span>
           <span id="lbl-angle">45°</span>
         </div>
-        <input id="slider-angle" type="range" min="5" max="85" step="1" value="45" />
+        <input id="slider-angle" data-param="angleDeg" type="range" min="5" max="85" step="1" value="45" />
       </div>
 
-      <div class="slider-control">
+      <div id="gravity-control" class="slider-control">
         <div class="slider-label-row">
           <span>Gravity g</span>
           <span id="lbl-g">9.81 m/s²</span>
         </div>
-        <input id="slider-g" type="range" min="1.0" max="25.0" step="0.01" value="9.81" />
+        <input id="slider-g" data-param="g" type="range" min="1.0" max="25.0" step="0.01" value="9.81" />
       </div>
 
-      <div class="slider-control">
+      <div id="height-control" class="slider-control">
         <div class="slider-label-row">
           <span>Initial Height y₀</span>
           <span id="lbl-y0">1.5 m</span>
         </div>
-        <input id="slider-y0" type="range" min="0" max="15" step="0.5" value="1.5" />
+        <input id="slider-y0" data-param="y0" type="range" min="0" max="15" step="0.5" value="1.5" />
       </div>
 
-      <div class="slider-control">
+      <div id="speed-control" class="slider-control">
         <div class="slider-label-row">
           <span>Playback Speed</span>
           <span id="lbl-speed">1.00×</span>
         </div>
-        <input id="slider-speed" type="range" min="0.25" max="2.0" step="0.25" value="1.0" />
+        <input id="slider-speed" data-param="timeScale" type="range" min="0.25" max="2.0" step="0.25" value="1.0" />
       </div>
     </div>
   </section>
@@ -628,12 +683,14 @@ AGENT_GUIDANCE:
       projectileRadius: 0.55,
       skyColor: 0x0b1120,
       fixedPhysicsDt: 1 / 120,
+      defaultCameraPosition: [28, 18, 44],
+      defaultCameraTarget: [24, 6, 0],
     };
 
     // =========================================================================
     // 2. PHYSICAL CONSTANTS AND PARAMETERS
     // =========================================================================
-    const params = {
+    const INITIAL_PARAMS = {
       x0: 0,
       y0: 1.5,
       v0: 24.0,
@@ -643,6 +700,8 @@ AGENT_GUIDANCE:
       showVectors: true,
       showPredictedArc: true,
     };
+
+    const params = { ...INITIAL_PARAMS };
 
     // =========================================================================
     // 3. PHYSICS MODEL
@@ -690,6 +749,50 @@ AGENT_GUIDANCE:
       const timeOfFlight = (vy0 + Math.sqrt(discriminant)) / safeG;
       const range = x0 + vx0 * timeOfFlight;
       return { vx0, vy0, apexTime, maxHeight, timeOfFlight, range };
+    }
+
+    /**
+     * Deterministically rebuilds projectile position, velocity, and trail up to time t.
+     */
+    function evaluatePhysicsAtTime(targetTime) {
+      const metrics = calculateAnalyticalMetrics(
+        params.x0,
+        params.y0,
+        params.v0,
+        params.angleDeg,
+        params.g
+      );
+      const clampedTime = Math.max(0, Math.min(Number(targetTime) || 0, metrics.timeOfFlight));
+      const landed = clampedTime >= metrics.timeOfFlight - 1e-6 && metrics.timeOfFlight > 0;
+      const pos = calculatePosition(
+        params.x0,
+        params.y0,
+        params.v0,
+        params.angleDeg,
+        params.g,
+        clampedTime
+      );
+      const vel = calculateVelocity(params.v0, params.angleDeg, params.g, clampedTime);
+
+      simState.t = clampedTime;
+      simState.landed = landed;
+      simState.position.x = pos.x;
+      simState.position.y = Math.max(0, pos.y);
+      simState.position.z = 0;
+      simState.velocity.vx = vel.vx;
+      simState.velocity.vy = vel.vy;
+      simState.velocity.speed = vel.speed;
+      simState.metrics = metrics;
+
+      const trail = [];
+      const steps = Math.max(1, Math.min(CONFIG.maxTrailPoints, Math.ceil(clampedTime / CONFIG.trailSampleInterval)));
+      for (let i = 0; i <= steps; i++) {
+        const tau = (i / steps) * clampedTime;
+        const p = calculatePosition(params.x0, params.y0, params.v0, params.angleDeg, params.g, tau);
+        trail.push(new THREE.Vector3(p.x, Math.max(0, p.y), 0));
+      }
+      simState.trailPoints = trail;
+      simState.lastTrailSampleTime = clampedTime;
     }
 
     /**
@@ -767,7 +870,7 @@ AGENT_GUIDANCE:
       0.1,
       400
     );
-    camera.position.set(28, 18, 44);
+    camera.position.set(...CONFIG.defaultCameraPosition);
 
     const renderer = new THREE.WebGLRenderer({
       antialias: !isSoftwareGl,
@@ -811,7 +914,7 @@ AGENT_GUIDANCE:
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = !isSoftwareGl;
     controls.dampingFactor = 0.06;
-    controls.target.set(24, 6, 0);
+    controls.target.set(...CONFIG.defaultCameraTarget);
     controls.minDistance = 8;
     controls.maxDistance = 150;
     controls.maxPolarAngle = Math.PI * 0.49;
@@ -906,7 +1009,6 @@ AGENT_GUIDANCE:
       metalness: 0.5,
     });
 
-    // Elevation pedestal tower (scales dynamically with y0)
     const pedestalTower = new THREE.Mesh(
       new THREE.CylinderGeometry(0.42, 0.58, 1, 20),
       castIronMat
@@ -915,14 +1017,12 @@ AGENT_GUIDANCE:
     pedestalTower.receiveShadow = true;
     launcherGroup.add(pedestalTower);
 
-    // Base anchor plate resting flush at y = 0
     const basePlate = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.22, 2.2), castIronMat);
     basePlate.position.y = 0.11;
     basePlate.castShadow = true;
     basePlate.receiveShadow = true;
     launcherGroup.add(basePlate);
 
-    // Pivot carriage & barrel assembly
     const pivotAssembly = new THREE.Group();
     const trunnion = new THREE.Mesh(
       new THREE.CylinderGeometry(0.32, 0.32, 1.35, 20),
@@ -988,21 +1088,18 @@ AGENT_GUIDANCE:
     landingRing.visible = false;
     scene.add(landingRing);
 
-    // Apex height marker
     const apexMarker = new THREE.Mesh(
       new THREE.OctahedronGeometry(0.35, 0),
       new THREE.MeshBasicMaterial({ color: 0x38bdf8 })
     );
     scene.add(apexMarker);
 
-    // Live Trajectory Trail Line
     const trailGeometry = new THREE.BufferGeometry();
     const trailMaterial = new THREE.LineBasicMaterial({ color: 0xfbbf24 });
     const trailLine = new THREE.Line(trailGeometry, trailMaterial);
     trailLine.frustumCulled = false;
     scene.add(trailLine);
 
-    // Predicted Analytical Parabolic Arc (Dashed)
     const predictedGeometry = new THREE.BufferGeometry();
     const predictedMaterial = new THREE.LineDashedMaterial({
       color: 0x38bdf8,
@@ -1015,7 +1112,6 @@ AGENT_GUIDANCE:
     predictedLine.frustumCulled = false;
     scene.add(predictedLine);
 
-    // Physics Vectors: Velocity & Gravity
     const velocityArrow = new THREE.ArrowHelper(
       new THREE.Vector3(1, 0, 0),
       new THREE.Vector3(0, 0, 0),
@@ -1056,7 +1152,6 @@ AGENT_GUIDANCE:
       trailPoints: [],
     };
 
-    // Pre-allocated math helpers for zero-GC render loop
     const _velDir = new THREE.Vector3();
     const _gravDir = new THREE.Vector3(0, -1, 0);
 
@@ -1104,21 +1199,22 @@ AGENT_GUIDANCE:
     }
 
     function updateVisualization() {
-      // Launcher posture & height
       const pedestalHeight = Math.max(0.25, params.y0);
       pedestalTower.scale.set(1, pedestalHeight, 1);
       pedestalTower.position.y = pedestalHeight * 0.5;
       pivotAssembly.position.set(params.x0, params.y0, 0);
       barrelGroup.rotation.z = THREE.MathUtils.degToRad(params.angleDeg);
 
-      // Projectile position (clamp visual sphere radius above ground plane on impact)
       const visualY = Math.max(CONFIG.projectileRadius, simState.position.y);
-      projectileMesh.position.set(simState.position.x, simState.landed ? CONFIG.projectileRadius : Math.max(0, simState.position.y), 0);
+      projectileMesh.position.set(
+        simState.position.x,
+        simState.landed ? CONFIG.projectileRadius : Math.max(0, simState.position.y),
+        0
+      );
       if (simState.position.y < CONFIG.projectileRadius && !simState.landed) {
         projectileMesh.position.y = visualY;
       }
 
-      // Landing marker
       if (simState.landed) {
         landingRing.visible = true;
         landingRing.position.set(simState.position.x, 0.04, 0);
@@ -1126,7 +1222,6 @@ AGENT_GUIDANCE:
         landingRing.visible = false;
       }
 
-      // Trail geometry
       if (simState.trailPoints.length >= 2) {
         trailGeometry.setFromPoints(simState.trailPoints);
         trailLine.visible = true;
@@ -1134,7 +1229,6 @@ AGENT_GUIDANCE:
         trailLine.visible = false;
       }
 
-      // Vector arrows
       const showVec = params.showVectors;
       velocityArrow.visible = showVec && simState.velocity.speed > 0.05;
       if (velocityArrow.visible) {
@@ -1153,7 +1247,6 @@ AGENT_GUIDANCE:
         gravityArrow.setLength(gLen, Math.min(0.75, gLen * 0.28), 0.32);
       }
 
-      // Telemetry DOM readouts
       document.getElementById('val-t').textContent = simState.t.toFixed(2) + ' s';
       document.getElementById('val-speed').textContent = simState.velocity.speed.toFixed(2) + ' m/s';
       document.getElementById('val-x').textContent = simState.position.x.toFixed(2) + ' m';
@@ -1223,17 +1316,49 @@ AGENT_GUIDANCE:
     }
     window.addEventListener('resize', onWindowResize);
 
+    controls.addEventListener('end', () => {
+      if (window.walkthroughEngine && typeof window.walkthroughEngine.recordInteraction === 'function') {
+        window.walkthroughEngine.recordInteraction({
+          type: 'camera-change',
+          target: 'camera',
+          newValue: {
+            position: [camera.position.x, camera.position.y, camera.position.z],
+            target: [controls.target.x, controls.target.y, controls.target.z],
+          },
+        });
+      }
+    });
+
     // =========================================================================
     // 9. UI CONTROLS
     // =========================================================================
-    function setSimulationParameters(updates, shouldReset = false) {
-      Object.assign(params, updates);
+    function syncControlElementsFromParams() {
+      document.getElementById('slider-v0').value = String(params.v0);
+      document.getElementById('slider-angle').value = String(params.angleDeg);
+      document.getElementById('slider-g').value = String(params.g);
+      document.getElementById('slider-y0').value = String(params.y0);
+      document.getElementById('slider-speed').value = String(params.timeScale);
+      document.getElementById('chk-vectors').checked = Boolean(params.showVectors);
+      document.getElementById('chk-predicted').checked = Boolean(params.showPredictedArc);
+
+      const presetEl = document.getElementById('select-gravity-preset');
+      const matchingOption = Array.from(presetEl.options).find(
+        (opt) => Math.abs(parseFloat(opt.value) - params.g) < 0.05
+      );
+      if (matchingOption) {
+        presetEl.value = matchingOption.value;
+      }
+
       document.getElementById('lbl-v0').textContent = params.v0.toFixed(1) + ' m/s';
       document.getElementById('lbl-angle').textContent = Math.round(params.angleDeg) + '°';
       document.getElementById('lbl-g').textContent = params.g.toFixed(2) + ' m/s²';
       document.getElementById('lbl-y0').textContent = params.y0.toFixed(1) + ' m';
       document.getElementById('lbl-speed').textContent = params.timeScale.toFixed(2) + '×';
+    }
 
+    function setSimulationParameters(updates, shouldReset = false) {
+      Object.assign(params, updates);
+      syncControlElementsFromParams();
       updatePredictedTrajectoryVisuals();
       if (shouldReset) {
         resetSimulation(true);
@@ -1264,7 +1389,6 @@ AGENT_GUIDANCE:
 
     document.getElementById('select-gravity-preset').addEventListener('change', (e) => {
       const val = parseFloat(e.target.value);
-      document.getElementById('slider-g').value = String(val);
       setSimulationParameters({ g: val }, true);
     });
 
@@ -1312,6 +1436,190 @@ AGENT_GUIDANCE:
     });
 
     // =========================================================================
+    // SIMULATION_API (Standardized State Synchronization Contract)
+    // =========================================================================
+    window.simulationAPI = {
+      getState() {
+        return {
+          time: simState.t,
+          running: simState.running,
+          landed: simState.landed,
+          parameters: {
+            x0: params.x0,
+            y0: params.y0,
+            v0: params.v0,
+            angleDeg: params.angleDeg,
+            g: params.g,
+            timeScale: params.timeScale,
+            showVectors: params.showVectors,
+            showPredictedArc: params.showPredictedArc,
+          },
+          controls: {
+            showVectors: params.showVectors,
+            showPredictedArc: params.showPredictedArc,
+            timeScale: params.timeScale,
+          },
+          camera: {
+            position: [camera.position.x, camera.position.y, camera.position.z],
+            target: [controls.target.x, controls.target.y, controls.target.z],
+          },
+        };
+      },
+
+      setState(nextState) {
+        if (!nextState || typeof nextState !== 'object') return;
+        if (nextState.parameters && typeof nextState.parameters === 'object') {
+          Object.assign(params, nextState.parameters);
+        }
+        if (nextState.controls && typeof nextState.controls === 'object') {
+          if (typeof nextState.controls.showVectors === 'boolean') {
+            params.showVectors = nextState.controls.showVectors;
+          }
+          if (typeof nextState.controls.showPredictedArc === 'boolean') {
+            params.showPredictedArc = nextState.controls.showPredictedArc;
+          }
+          if (typeof nextState.controls.timeScale === 'number') {
+            params.timeScale = nextState.controls.timeScale;
+          }
+        }
+
+        syncControlElementsFromParams();
+        updatePredictedTrajectoryVisuals();
+
+        if (typeof nextState.time === 'number') {
+          evaluatePhysicsAtTime(nextState.time);
+        } else {
+          evaluatePhysicsAtTime(0);
+        }
+
+        if (typeof nextState.running === 'boolean') {
+          simState.running = nextState.running && !simState.landed;
+        }
+
+        if (nextState.camera && Array.isArray(nextState.camera.position) && nextState.camera.position.length === 3) {
+          camera.position.set(
+            nextState.camera.position[0],
+            nextState.camera.position[1],
+            nextState.camera.position[2]
+          );
+        }
+        if (nextState.camera && Array.isArray(nextState.camera.target) && nextState.camera.target.length === 3) {
+          controls.target.set(
+            nextState.camera.target[0],
+            nextState.camera.target[1],
+            nextState.camera.target[2]
+          );
+        }
+        controls.update();
+        updateVisualization();
+      },
+
+      getParameters() {
+        return { ...params };
+      },
+
+      setParameter(name, value) {
+        if (!(name in params)) return;
+        const shouldReset = name !== 'timeScale' && name !== 'showVectors' && name !== 'showPredictedArc';
+        setSimulationParameters({ [name]: value }, shouldReset);
+      },
+
+      play() {
+        if (simState.landed) {
+          resetSimulation(true);
+        } else {
+          simState.running = true;
+          updateVisualization();
+        }
+      },
+
+      pause() {
+        simState.running = false;
+        updateVisualization();
+      },
+
+      reset() {
+        Object.assign(params, INITIAL_PARAMS);
+        syncControlElementsFromParams();
+        camera.position.set(...CONFIG.defaultCameraPosition);
+        controls.target.set(...CONFIG.defaultCameraTarget);
+        controls.update();
+        resetSimulation(true);
+      },
+    };
+
+    // =========================================================================
+    // WALKTHROUGH_SEGMENTS (Tailored Narrated Guided Walkthrough Configuration)
+    // =========================================================================
+    window.WALKTHROUGH_CONFIG = {
+      title: 'Guided Tour: 3D Projectile Motion',
+      description: 'Narrated exploration of parabolic trajectories, velocity components, and gravity.',
+      language: 'en-US',
+      segments: [
+        {
+          id: 'intro',
+          title: 'Welcome & Physical Phenomenon',
+          text: 'Welcome to the three-dimensional projectile motion simulation. Here, a projectile launches into a uniform gravitational field with negligible air resistance, tracing a smooth parabolic trajectory across the calibrated range floor.',
+          durationEstimate: 13,
+          highlight: ['#telemetry-panel'],
+          tooltip: 'Live kinematics readouts update in SI units throughout flight.',
+          experimentSuggestion: 'Drag the 3D viewport to orbit around the launcher and watch the golden trajectory trail.',
+          checkpoint: true,
+        },
+        {
+          id: 'interface',
+          title: 'Playback & Time Controls',
+          text: 'At the bottom dock, use Pause, Re-launch, and Reset to inspect the motion at any instant. You can also adjust the Playback Speed slider to view the trajectory in slow motion while examining the apex.',
+          durationEstimate: 12,
+          highlight: ['#playback-controls', '#speed-control'],
+          tooltip: 'Pause mid-flight or slow down time to inspect apex kinematics.',
+          experimentSuggestion: 'Lower Playback Speed to 0.50x and press Re-launch to observe the ascent in detail.',
+          checkpoint: true,
+        },
+        {
+          id: 'velocity-angle',
+          title: 'Initial Velocity & Launch Angle',
+          text: 'The Initial Velocity and Launch Angle sliders determine both the horizontal range and maximum altitude. On flat ground, forty-five degrees maximizes range, while complementary angles such as thirty and sixty degrees reach the same distance with different flight times.',
+          durationEstimate: 15,
+          highlight: ['#velocity-control', '#angle-control'],
+          tooltip: 'Adjust initial speed v0 and elevation angle theta.',
+          experimentSuggestion: 'Compare predicted range at 30 degrees versus 60 degrees with the same initial velocity.',
+          checkpoint: true,
+        },
+        {
+          id: 'gravity-vectors',
+          title: 'Gravity Environments & Force Vectors',
+          text: 'Next, explore how gravitational acceleration shapes the arc. Switch between Earth, Moon, Mars, and Jupiter using the Gravity preset menu, and toggle the Vectors checkbox to compare the changing green velocity arrow against the constant red gravity arrow.',
+          durationEstimate: 15,
+          highlight: ['#gravity-preset-control', '#gravity-control', '#vectors-control'],
+          tooltip: 'Compare planetary gravity and inspect v(t) and g arrows.',
+          experimentSuggestion: 'Switch gravity to Moon (1.62 m/s^2) and notice how dramatically both flight time and range expand.',
+          checkpoint: true,
+        },
+        {
+          id: 'telemetry-equations',
+          title: 'Velocity Components & Governing Equations',
+          text: 'Watch the Velocity vx and vy readouts alongside the Governing Equations panel. Because gravity acts strictly downward, horizontal velocity stays completely constant while vertical velocity decreases linearly and crosses zero right at the highest point.',
+          durationEstimate: 14,
+          highlight: ['#telemetry-velocity', '#equations-panel'],
+          tooltip: 'Horizontal velocity vx remains constant while vy crosses zero at the apex.',
+          experimentSuggestion: 'Pause the projectile near the blue apex marker and verify that vy approaches 0 m/s.',
+          checkpoint: true,
+        },
+        {
+          id: 'conclusion',
+          title: 'Elevated Launches & Exploration',
+          text: 'Finally, try raising the Initial Height slider to launch from an elevated pedestal, and toggle the Predicted Arc to test your own intuition before firing. Feel free to pause, rewind, or experiment with any combination of parameters.',
+          durationEstimate: 13,
+          highlight: ['#height-control', '#predicted-control'],
+          tooltip: 'Raise launch height y0 or hide the predicted arc to test predictions.',
+          experimentSuggestion: 'Set Initial Height to 10 m and find the new launch angle that maximizes horizontal range.',
+          checkpoint: true,
+        },
+      ],
+    };
+
+    // =========================================================================
     // 10. CLEANUP AND RESET
     // =========================================================================
     function resetSimulation(autoStart = true) {
@@ -1341,9 +1649,12 @@ AGENT_GUIDANCE:
     });
 
     // Initialize simulation state and launch animation loop
+    syncControlElementsFromParams();
     resetSimulation(true);
     animate();
   </script>
 </body>
 </html>
 `;
+
+export const PROJECTILE_MOTION_HTML = ensureWalkthroughEmbedded(RAW_PROJECTILE_MOTION_HTML);

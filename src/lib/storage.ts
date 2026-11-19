@@ -204,7 +204,26 @@ export class LocalStorageRepository implements ProjectRepository {
       }
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed) && parsed.length > 0) {
-        return parsed;
+        let upgraded = false;
+        const nextProjects = parsed.map((proj: SimulationProject) => {
+          if (
+            proj &&
+            proj.id === 'proj-projectile-motion' &&
+            Array.isArray(proj.versions) &&
+            proj.versions.length === 1 &&
+            proj.versions[0]?.id === 'ver-initial-projectile' &&
+            typeof proj.currentHtml === 'string' &&
+            !/WALKTHROUGH_CONFIG/.test(proj.currentHtml)
+          ) {
+            upgraded = true;
+            return createSeededProjectileProject();
+          }
+          return proj;
+        });
+        if (upgraded) {
+          this.saveProjects(nextProjects);
+        }
+        return nextProjects;
       }
       const seeded = [createSeededProjectileProject()];
       this.saveProjects(seeded);

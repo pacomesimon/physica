@@ -89,10 +89,13 @@ const BRIDGE_SCRIPT = `<script ${BRIDGE_MARKER}>
 export function injectPreviewBridge(html: string): string {
   const cleanHtml = stripPreviewBridge(html);
   if (/<head[\s>]/i.test(cleanHtml)) {
-    return cleanHtml.replace(/<head([^>]*)>/i, `<head$1>\n${BRIDGE_SCRIPT}`);
+    return cleanHtml.replace(/<head([^>]*)>/i, (_match, attrs) => `<head${attrs}>\n${BRIDGE_SCRIPT}`);
   }
   if (/<html[\s>]/i.test(cleanHtml)) {
-    return cleanHtml.replace(/<html([^>]*)>/i, `<html$1>\n<head>${BRIDGE_SCRIPT}</head>`);
+    return cleanHtml.replace(
+      /<html([^>]*)>/i,
+      (_match, attrs) => `<html${attrs}>\n<head>${BRIDGE_SCRIPT}</head>`
+    );
   }
   return `${BRIDGE_SCRIPT}\n${cleanHtml}`;
 }

@@ -1,7 +1,8 @@
-import { stripPreviewBridge } from './bridgeInjector';
-import { validateSimulationHtml } from './htmlValidator';
-import { parseSimulationMetadata } from './metadataParser';
-import type { SimulationMetadata, ValidationResult } from '../types/simulation';
+import { stripPreviewBridge } from './bridgeInjector.ts';
+import { validateSimulationHtml } from './htmlValidator.ts';
+import { parseSimulationMetadata } from './metadataParser.ts';
+import { ensureWalkthroughEmbedded } from './walkthrough/embedder.ts';
+import type { SimulationMetadata, ValidationResult } from '../types/simulation.ts';
 
 export interface ExportPackage {
   filename: string;
@@ -39,7 +40,7 @@ export function extractCdnDependencies(html: string): string[] {
 }
 
 export function prepareStandaloneExport(rawHtml: string, projectTitle?: string): ExportPackage {
-  const cleanHtml = stripPreviewBridge(rawHtml).trim();
+  const cleanHtml = ensureWalkthroughEmbedded(stripPreviewBridge(rawHtml).trim());
   const metadata = parseSimulationMetadata(cleanHtml);
   const validation = validateSimulationHtml(cleanHtml);
   const filename = slugifyFilename(projectTitle || metadata.title);

@@ -31,6 +31,21 @@ export interface ProviderAdapter {
   generate(input: AgentGenerateInput): Promise<AgentStructuredResponse>;
 }
 
+export const CODE_PRODUCING_RESPONSE_TYPES: ReadonlySet<AgentResponseType> = new Set([
+  'new_simulation',
+  'code_modification',
+  'bug_fix',
+]);
+
+export function cleanHtmlString(raw: string): string {
+  return raw
+    .trim()
+    .replace(/^```html\s*/i, '')
+    .replace(/^```\s*/i, '')
+    .replace(/```\s*$/i, '')
+    .trim();
+}
+
 export function normalizeAgentResponse(
   raw: Record<string, unknown>,
   providerId: LLMProviderId,
@@ -44,9 +59,14 @@ export function normalizeAgentResponse(
     'clarification',
   ];
 
+  let html = typeof raw.html === 'string' ? cleanHtmlString(raw.html) : undefined;
+  if (html && html.length === 0) {
+    html = undefined;
+  }
+
   const responseType = allowedTypes.includes(raw.responseType as AgentResponseType)
     ? (raw.responseType as AgentResponseType)
-    : typeof raw.html === 'string' && raw.html.trim().length > 0
+    : html
       ? 'code_modification'
       : 'explanation';
 
@@ -56,7 +76,9 @@ export function normalizeAgentResponse(
       : 'Processed simulation request.';
 
   const educationalNotes =
-    typeof raw.educationalNotes === 'string' ? raw.educationalNotes.trim() : undefined;
+    typeof raw.educationalNotes === 'string' && raw.educationalNotes.trim().length > 0
+      ? raw.educationalNotes.trim()
+      : undefined;
 
   const clarificationQuestion =
     typeof raw.clarificationQuestion === 'string' && raw.clarificationQuestion.trim().length > 0
@@ -82,11 +104,6 @@ export function normalizeAgentResponse(
         )
     : undefined;
 
-  let html = typeof raw.html === 'string' ? raw.html.trim() : undefined;
-  if (html) {
-    html = html.replace(/^```html\s*/i, '').replace(/```\s*$/i, '').trim();
-  }
-
   return {
     responseType,
     summary,
@@ -94,7 +111,7 @@ export function normalizeAgentResponse(
     physicsAssumptions,
     changedSections,
     clarificationQuestion,
-    html: html && html.length > 0 ? html : undefined,
+    html,
     patches,
     providerId,
     model,
@@ -117,4 +134,80 @@ export function parseJsonFromText(text: string): Record<string, unknown> {
     }
     throw new Error('Model response did not contain valid JSON.');
   }
+}
+
+/**
+ * Parses either the primary delimited envelope:
+ *   <<<AGENT_JSON>>> ... <<<END_AGENT_JSON>>>
+ *   <<<SIMULATION_HTML>>> ... <<<END_SIMULATION_HTML>>>
+ * or legacy/fallback pure JSON (with optional fenced ```html block).
+ */
+export function parseAgentEnvelope(text: string): Record<string, unknown> {
+  const trimmed = text.trim();
+
+  // Extract delimited HTML block if present
+  let extractedHtml: string | undefined;
+  const htmlDelimiterMatch = trimmed.match(
+    /<<<SIMULATION_HTML>>>\s*([\s\S]*?)(?:<<<END_SIMULATION_HTML>>>|$)/i
+  );
+  if (htmlDelimiterMatch?.[1]) {
+    const candidate = cleanHtmlString(htmlDelimiterMatch[1]);
+    if (candidate.length > 0) {
+      extractedHtml = candidate;
+    }
+  } else {
+    // Fallback: check for fenced ```html block outside JSON
+    const fencedHtmlMatch = trimmed.match(/```html\s*([\s\S]*?)```/i);
+    if (fencedHtmlMatch?.[1]) {
+      const candidate = cleanHtmlString(fencedHtmlMatch[1]);
+      if (/<!doctype\s+html>|<html[\s>]/i.test(candidate)) {
+        extractedHtml = candidate;
+      }
+    }
+  }
+
+  // Extract metadata JSON block
+  let parsedMeta: Record<string, unknown> = {};
+  const jsonDelimiterMatch = trimmed.match(
+    /<<<AGENT_JSON>>>\s*([\s\S]*?)<<<END_AGENT_JSON>>>/i
+  );
+
+  if (jsonDelimiterMatch?.[1]) {
+    parsedMeta = parseJsonFromText(jsonDelimiterMatch[1]);
+  } else {
+    // Strip the HTML block before attempting JSON extraction so braces in JS don't confuse JSON search
+    const withoutHtml = trimmed
+      .replace(/<<<SIMULATION_HTML>>>[\s\S]*?(?:<<<END_SIMULATION_HTML>>>|$)/i, '')
+      .replace(/```html[\s\S]*?```/gi, '')
+      .trim();
+
+    if (withoutHtml) {
+      try {
+        parsedMeta = parseJsonFromText(withoutHtml);
+      } catch {
+        // Fallback: try parsing the full original response as JSON (legacy format where html is inside JSON)
+        if (!extractedHtml) {
+          parsedMeta = parseJsonFromText(trimmed);
+        } else {
+          parsedMeta = {
+            responseType: 'new_simulation',
+            summary: 'Generated updated 3D physics simulation.',
+          };
+        }
+      }
+    } else if (extractedHtml) {
+      parsedMeta = {
+        responseType: 'new_simulation',
+        summary: 'Generated updated 3D physics simulation.',
+      };
+    } else {
+      throw new Error('Model response did not contain metadata or simulation HTML.');
+    }
+  }
+
+  if (extractedHtml && (!parsedMeta.html || typeof parsedMeta.html !== 'string' || !parsedMeta.html.trim())) {
+    parsedMeta.html = extractedHtml;
+  }
+
+  return parsedMeta;
 }

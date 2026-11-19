@@ -1,5 +1,6 @@
 import type { ValidationResult } from '../types/simulation.ts';
 import { parseSimulationMetadata } from './metadataParser.ts';
+import { validateWalkthroughSelectors } from './walkthrough/embedder.ts';
 
 const FORBIDDEN_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
   { pattern: /GEMINI_API_KEY/i, label: 'Server API key identifier (GEMINI_API_KEY)' },
@@ -22,6 +23,11 @@ export function validateSimulationHtml(html: string): ValidationResult {
       hasThreeJs: false,
       hasMetadata: false,
       sectionCount: 0,
+      hasWalkthroughConfig: false,
+      hasSimulationApi: false,
+      hasWalkthroughEngine: false,
+      walkthroughSegmentCount: 0,
+      missingHighlightSelectors: [],
     };
   }
 
@@ -70,6 +76,26 @@ export function validateSimulationHtml(html: string): ValidationResult {
     warnings.push('Missing <title> tag for standalone browser tab display.');
   }
 
+  const hasWalkthroughConfig = Boolean(metadata.hasWalkthrough);
+  const hasSimulationApi = Boolean(metadata.hasSimulationApi);
+  const hasWalkthroughEngine =
+    /WALKTHROUGH_PLAYBACK_ENGINE/.test(trimmed) || /speechSynthesis/.test(trimmed);
+  const selectorCheck = hasWalkthroughConfig
+    ? validateWalkthroughSelectors(trimmed)
+    : { selectors: [], missingSelectors: [] };
+
+  if (!hasWalkthroughConfig) {
+    warnings.push('Missing window.WALKTHROUGH_CONFIG definition for narrated guided walkthrough.');
+  }
+  if (!hasSimulationApi) {
+    warnings.push('Missing window.simulationAPI state manager for walkthrough synchronization.');
+  }
+  if (selectorCheck.missingSelectors.length > 0) {
+    warnings.push(
+      `Walkthrough references highlight selectors not found in HTML: ${selectorCheck.missingSelectors.join(', ')}`
+    );
+  }
+
   return {
     valid: errors.length === 0,
     errors,
@@ -77,5 +103,10 @@ export function validateSimulationHtml(html: string): ValidationResult {
     hasThreeJs,
     hasMetadata: metadata.hasStructuredHeader,
     sectionCount: metadata.presentSections.length,
+    hasWalkthroughConfig,
+    hasSimulationApi,
+    hasWalkthroughEngine,
+    walkthroughSegmentCount: metadata.walkthroughSegmentCount ?? 0,
+    missingHighlightSelectors: selectorCheck.missingSelectors,
   };
 }

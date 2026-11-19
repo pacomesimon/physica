@@ -38,6 +38,11 @@ export interface SimulationMetadata {
   agentGuidance: string[];
   hasStructuredHeader: boolean;
   presentSections: number[];
+  hasWalkthrough?: boolean;
+  walkthroughTitle?: string;
+  walkthroughSegmentCount?: number;
+  hasSimulationApi?: boolean;
+  walkthroughDocSections?: string[];
 }
 
 export interface RuntimeDiagnostic {
@@ -111,4 +116,9 @@ export interface ValidationResult {
   hasThreeJs: boolean;
   hasMetadata: boolean;
   sectionCount: number;
+  hasWalkthroughConfig?: boolean;
+  hasSimulationApi?: boolean;
+  hasWalkthroughEngine?: boolean;
+  walkthroughSegmentCount?: number;
+  missingHighlightSelectors?: string[];
 }

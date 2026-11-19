@@ -83,6 +83,22 @@ export const ExportModal: React.FC<ExportModalProps> = ({ html, projectTitle, on
             </div>
 
             <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300 tabular-nums">
+              {pkg.validation.hasWalkthroughConfig &&
+              pkg.validation.hasWalkthroughEngine &&
+              pkg.validation.hasSimulationApi &&
+              (pkg.validation.missingHighlightSelectors?.length ?? 0) === 0 ? (
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+              ) : (
+                <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0" />
+              )}
+              <span>
+                {pkg.validation.hasWalkthroughConfig
+                  ? `Guided Walkthrough embedded (${pkg.validation.walkthroughSegmentCount ?? 0} segments · ${pkg.validation.hasSimulationApi ? 'simulationAPI ready' : 'missing simulationAPI'}${(pkg.validation.missingHighlightSelectors?.length ?? 0) > 0 ? ` · missing selectors: ${pkg.validation.missingHighlightSelectors?.join(', ')}` : ' · all highlight selectors verified'})`
+                  : 'No Guided Walkthrough configured in this simulation'}
+              </span>
+            </div>
+
+            <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300 tabular-nums">
               <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
               <span>
                 Package size: {(pkg.byteSize / 1024).toFixed(1)} KB · Preview bridge stripped

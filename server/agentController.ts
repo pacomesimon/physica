@@ -1,9 +1,13 @@
 import type { Request, Response } from 'express';
 import { validateSimulationHtml } from '../src/lib/htmlValidator.ts';
 import { parseSimulationMetadata } from '../src/lib/metadataParser.ts';
+import {
+  ensureWalkthroughEmbedded,
+  stripWalkthroughBundle,
+} from '../src/lib/walkthrough/embedder.ts';
 import type { RuntimeDiagnostic } from '../src/types/simulation.ts';
 import { getProviderAdapter, listProviderOptions } from './llm/providerRegistry.ts';
-import type { ConversationTurn } from './llm/types.ts';
+import { CODE_PRODUCING_RESPONSE_TYPES, type ConversationTurn } from './llm/types.ts';
 
 export function handleListProviders(_req: Request, res: Response): void {
   res.json({
@@ -30,6 +34,10 @@ export async function handleAgentGenerate(req: Request, res: Response): Promise<
     }
 
     const currentHtml = typeof body.currentHtml === 'string' ? body.currentHtml : '';
+    // Strip the canonical embedded walkthrough runtime before sending source to the LLM so the model
+    // focuses on physics, UI, window.simulationAPI, and window.WALKTHROUGH_CONFIG without wasting tokens.
+    const promptHtml = stripWalkthroughBundle(currentHtml);
+
     const conversation: ConversationTurn[] = Array.isArray(body.conversation)
       ? body.conversation.filter(
           (item): item is ConversationTurn =>
@@ -53,18 +61,91 @@ export async function handleAgentGenerate(req: Request, res: Response): Promise<
     const adapter = getProviderAdapter(providerId);
     const metadata = parseSimulationMetadata(currentHtml);
 
-    const result = await adapter.generate({
+    let result = await adapter.generate({
       instruction,
       conversation,
-      currentHtml,
+      currentHtml: promptHtml,
       metadata,
       runtimeErrors,
       providerId: adapter.id,
       model,
     });
 
-    // Validate generated HTML if this response includes code changes
     if (result.html) {
+      result.html = ensureWalkthroughEmbedded(result.html);
+    }
+
+    const expectsHtml = CODE_PRODUCING_RESPONSE_TYPES.has(result.responseType);
+    const initialValidation = result.html ? validateSimulationHtml(result.html) : null;
+    const needsWalkthroughRetry = Boolean(
+      initialValidation &&
+        (!initialValidation.hasWalkthroughConfig ||
+          !initialValidation.hasSimulationApi ||
+          (initialValidation.missingHighlightSelectors &&
+            initialValidation.missingHighlightSelectors.length > 0))
+    );
+
+    // Automatic single retry if HTML is missing, invalid, or missing walkthrough/simulationAPI/selectors
+    if (expectsHtml && (!result.html || !initialValidation?.valid || needsWalkthroughRetry)) {
+      const reasons: string[] = [];
+      if (!result.html) {
+        reasons.push(
+          'Your previous response omitted the <<<SIMULATION_HTML>>>...<<<END_SIMULATION_HTML>>> block.'
+        );
+      } else {
+        if (initialValidation && !initialValidation.valid) {
+          reasons.push(`HTML validation errors: ${initialValidation.errors.join(' ')}`);
+        }
+        if (initialValidation && !initialValidation.hasWalkthroughConfig) {
+          reasons.push(
+            'Missing window.WALKTHROUGH_CONFIG with 5-6 tailored spoken narration segments.'
+          );
+        }
+        if (initialValidation && !initialValidation.hasSimulationApi) {
+          reasons.push(
+            'Missing standardized window.simulationAPI (getState, setState, getParameters, setParameter, play, pause, reset).'
+          );
+        }
+        if (
+          initialValidation?.missingHighlightSelectors &&
+          initialValidation.missingHighlightSelectors.length > 0
+        ) {
+          reasons.push(
+            `WALKTHROUGH_CONFIG references missing DOM selectors: ${initialValidation.missingHighlightSelectors.join(', ')}. Ensure every highlight selector matches an actual id="..." element in the HTML.`
+          );
+        }
+      }
+
+      const retryResult = await adapter.generate({
+        instruction: `${instruction}\n\nIMPORTANT CORRECTION: ${reasons.join(' ')} You MUST output the complete, runnable standalone Three.js HTML5 document inside <<<SIMULATION_HTML>>> and <<<END_SIMULATION_HTML>>> now.`,
+        conversation,
+        currentHtml: promptHtml,
+        metadata,
+        runtimeErrors,
+        providerId: adapter.id,
+        model,
+      });
+
+      if (retryResult.html) {
+        retryResult.html = ensureWalkthroughEmbedded(retryResult.html);
+      }
+      // Keep the retry result if it produced valid HTML or if the original had no valid HTML
+      const retryValidation = retryResult.html ? validateSimulationHtml(retryResult.html) : null;
+      if (retryValidation?.valid || !initialValidation?.valid) {
+        result = retryResult;
+      }
+    }
+
+    if (CODE_PRODUCING_RESPONSE_TYPES.has(result.responseType) && !result.html) {
+      res.status(422).json({
+        error:
+          'The AI agent described a simulation update but did not return HTML source code. Please try submitting your prompt again.',
+      });
+      return;
+    }
+
+    if (result.html) {
+      result.html = ensureWalkthroughEmbedded(result.html);
       const validation = validateSimulationHtml(result.html);
       if (!validation.valid) {
         res.status(422).json({

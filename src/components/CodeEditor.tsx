@@ -5,7 +5,11 @@ import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
 import { html } from '@codemirror/lang-html';
 import { defaultHighlightStyle, syntaxHighlighting } from '@codemirror/language';
 import { Check, FileCode2, Info } from 'lucide-react';
-import { EXPECTED_JS_SECTIONS, parseSimulationMetadata } from '../lib/metadataParser';
+import {
+  EXPECTED_JS_SECTIONS,
+  EXPECTED_WALKTHROUGH_SECTIONS,
+  parseSimulationMetadata,
+} from '../lib/metadataParser';
 
 interface CodeEditorProps {
   value: string;
@@ -108,6 +112,12 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({ value, theme, onApplyCod
           <span>{draftValue.split(/\r?\n/).length} lines</span>
           <span aria-hidden="true">·</span>
           <span>{metadata.presentSections.length}/10 AI sections</span>
+          {metadata.hasWalkthrough && (
+            <>
+              <span aria-hidden="true">·</span>
+              <span>Walkthrough ({metadata.walkthroughSegmentCount ?? 0} segs)</span>
+            </>
+          )}
         </div>
 
         <div className="flex items-center gap-2">
@@ -147,6 +157,27 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({ value, theme, onApplyCod
               </p>
             </div>
 
+            <div>
+              <h4 className="font-medium text-slate-700 dark:text-slate-300 mb-1.5">
+                Guided Walkthrough
+              </h4>
+              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded p-2 text-[11px] text-slate-600 dark:text-slate-300 flex flex-col gap-1 tabular-nums">
+                <div className="font-medium text-slate-900 dark:text-slate-100">
+                  {metadata.hasWalkthrough
+                    ? metadata.walkthroughTitle || 'Walkthrough Configured'
+                    : 'Not configured'}
+                </div>
+                <div className="flex items-center justify-between text-slate-500 dark:text-slate-400">
+                  <span>Segments</span>
+                  <span>{metadata.walkthroughSegmentCount ?? 0}</span>
+                </div>
+                <div className="flex items-center justify-between text-slate-500 dark:text-slate-400">
+                  <span>simulationAPI</span>
+                  <span>{metadata.hasSimulationApi ? 'Present' : 'Missing'}</span>
+                </div>
+              </div>
+            </div>
+
             {metadata.governingEquations.length > 0 && (
               <div>
                 <h4 className="font-medium text-slate-700 dark:text-slate-300 mb-1.5">
@@ -184,6 +215,30 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({ value, theme, onApplyCod
                       <span className="truncate">
                         {sec.number}. {sec.title}
                       </span>
+                      <span className="shrink-0 ml-1">{found ? 'OK' : '—'}</span>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+
+            <div>
+              <h4 className="font-medium text-slate-700 dark:text-slate-300 mb-1.5">
+                Walkthrough & AI Sections ({metadata.walkthroughDocSections?.length ?? 0}/11)
+              </h4>
+              <ul className="flex flex-col gap-1 text-[10.5px] font-mono tabular-nums">
+                {EXPECTED_WALKTHROUGH_SECTIONS.map((secName) => {
+                  const found = Boolean(metadata.walkthroughDocSections?.includes(secName));
+                  return (
+                    <li
+                      key={secName}
+                      className={`flex items-center justify-between px-2 py-1 rounded ${
+                        found
+                          ? 'text-slate-800 dark:text-slate-200 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800'
+                          : 'text-slate-400 dark:text-slate-600'
+                      }`}
+                    >
+                      <span className="truncate">{secName}</span>
                       <span className="shrink-0 ml-1">{found ? 'OK' : '—'}</span>
                     </li>
                   );

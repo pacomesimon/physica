@@ -29,19 +29,22 @@ Physica Studio is a web-based simulation engineering environment built for physi
 │       ├── demos/projectileMotion.ts  # Reference 3D Projectile Motion simulation & analytical engine
 │       ├── metadataParser.ts          # Parser for SIMULATION_METADATA & 10-section JS convention
 │       ├── htmlValidator.ts           # Structure, Three.js dependency, and secret-isolation validator
-│       ├── bridgeInjector.ts          # Ephemeral iframe postMessage bridge (stripped on export)
-│       ├── exporter.ts                # Standalone HTML packager
-│       └── storage.ts                 # LocalStorageRepository persistence abstraction
+│   │   ├── bridgeInjector.ts          # Ephemeral iframe postMessage bridge (stripped on export)
+│   │   ├── exporter.ts                # Standalone HTML packager (auto-embeds walkthrough engine)
+│   │   ├── storage.ts                 # LocalStorageRepository persistence abstraction
+│   │   └── walkthrough/               # Guided Walkthrough types, reusable controller, & standalone embedder
 └── tests/
-    └── studio.test.ts                 # Analytical physics, validation, bridge, and versioning tests
+    ├── studio.test.ts                 # Analytical physics, validation, bridge, and versioning tests
+    └── walkthrough.test.ts            # Speech engine, playback, highlighting, state sync, & export tests
 ```
 
-## Standalone HTML & AI-Friendly Documentation Convention
+## Standalone HTML, Guided Walkthroughs & AI-Friendly Documentation
 
-Every generated simulation is a self-contained HTML5 document using Three.js r170 via an import map (`https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js`), with:
-- A structured `<!-- SIMULATION_METADATA ... -->` header documenting learning objectives, physical model, governing equations, interactive parameters, visual elements, controls, and agent guidance.
-- JavaScript organized into 10 consistent sections (`1. SIMULATION CONFIGURATION` through `10. CLEANUP AND RESET`).
-- Strict separation between physics calculations (`PHYSICS MODEL`), visual rendering, and UI controls.
+Every generated simulation is a self-contained, unminified HTML5 document using Three.js r170 via an import map (`https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js`), with:
+- A structured `<!-- SIMULATION_METADATA ... -->` header documenting learning objectives, physical model, governing equations, interactive parameters, visual elements, controls, state schema, walkthrough metadata/transcript, and agent guidance.
+- JavaScript organized into 10 consistent sections (`1. SIMULATION CONFIGURATION` through `10. CLEANUP AND RESET`), plus standardized `window.simulationAPI` (`getState`, `setState`, `getParameters`, `setParameter`, `play`, `pause`, `reset`) and tailored `window.WALKTHROUGH_CONFIG`.
+- An embedded standalone **Narrated Guided Walkthrough** engine using the native browser `window.speechSynthesis` API (with graceful silent transcript fallback), synchronized clickable transcript, non-blocking control highlighting, and deterministic checkpoint + interaction-history state reconstruction on pause, resume, seek, and stop.
+- Strict separation between physics calculations (`PHYSICS MODEL`), visual rendering, UI controls, and walkthrough narration.
 
 > **CDN Note:** Exported `.html` files run directly in any modern browser without an account or backend server, though internet access is required to load Three.js from jsDelivr CDN.
 

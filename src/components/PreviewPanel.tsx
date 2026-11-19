@@ -45,6 +45,13 @@ export const PreviewPanel: React.FC<PreviewPanelProps> = ({
 
   const validation = useMemo(() => validateSimulationHtml(html), [html]);
   const bridgedSrcDoc = useMemo(() => injectPreviewBridge(html), [html]);
+  const contentHash = useMemo(() => {
+    let hash = 5381;
+    for (let i = 0; i < bridgedSrcDoc.length; i++) {
+      hash = ((hash << 5) + hash + bridgedSrcDoc.charCodeAt(i)) >>> 0;
+    }
+    return `${bridgedSrcDoc.length}-${hash.toString(36)}`;
+  }, [bridgedSrcDoc]);
 
   useEffect(() => {
     setSimStatus(validation.valid ? 'loading' : 'error');
@@ -281,7 +288,7 @@ export const PreviewPanel: React.FC<PreviewPanelProps> = ({
         >
           {validation.valid ? (
             <iframe
-              key={reloadNonce}
+              key={`${contentHash}-${reloadNonce}`}
               ref={iframeRef}
               title="3D Physics Simulation Preview"
               srcDoc={bridgedSrcDoc}

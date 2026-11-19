@@ -2,7 +2,7 @@ import type { AgentStructuredResponse, ProviderOption } from '../../src/types/si
 import { buildAgentPrompt, SIMULATION_SYSTEM_INSTRUCTION } from './simulationSystemPrompt.ts';
 import {
   normalizeAgentResponse,
-  parseJsonFromText,
+  parseAgentEnvelope,
   type AgentGenerateInput,
   type ProviderAdapter,
 } from './types.ts';
@@ -60,7 +60,6 @@ export class OpenAICompatProviderAdapter implements ProviderAdapter {
       headers,
       body: JSON.stringify({
         model,
-        response_format: { type: 'json_object' },
         messages: [
           { role: 'system', content: SIMULATION_SYSTEM_INSTRUCTION },
           { role: 'user', content: buildAgentPrompt(input) },
@@ -81,7 +80,7 @@ export class OpenAICompatProviderAdapter implements ProviderAdapter {
       throw new Error('OpenAI-compatible endpoint returned an empty completion.');
     }
 
-    const parsed = parseJsonFromText(content);
+    const parsed = parseAgentEnvelope(content);
     return normalizeAgentResponse(parsed, this.id, model);
   }
 }

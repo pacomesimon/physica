@@ -263,7 +263,18 @@ export default function App() {
         throw new Error(payload.error || `Request failed with status ${response.status}`);
       }
 
-      const nextHtml = payload.html;
+      const nextHtml = payload.html?.trim();
+      const expectsCodeUpdate =
+        payload.responseType === 'new_simulation' ||
+        payload.responseType === 'code_modification' ||
+        payload.responseType === 'bug_fix';
+
+      if (expectsCodeUpdate && !nextHtml) {
+        throw new Error(
+          'The simulation agent did not return updated HTML code for this request. Please retry.'
+        );
+      }
+
       let createdVersionId: string | undefined;
 
       updateActiveProject((proj) => {
@@ -273,12 +284,14 @@ export default function App() {
         let updatedSubject = proj.subject;
 
         if (nextHtml) {
-          updatedHtml = nextHtml;
+          const prevMeta = parseSimulationMetadata(proj.currentHtml);
           const meta = parseSimulationMetadata(nextHtml);
+          updatedHtml = nextHtml;
+
           if (
-            payload.responseType === 'new_simulation' &&
             meta.title &&
-            meta.title !== 'Untitled Simulation'
+            meta.title !== 'Untitled Simulation' &&
+            (payload.responseType === 'new_simulation' || meta.title !== prevMeta.title)
           ) {
             updatedTitle = meta.title;
           }

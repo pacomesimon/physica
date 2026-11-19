@@ -1,9 +1,9 @@
-import { GoogleGenAI, Type } from '@google/genai';
+import { GoogleGenAI } from '@google/genai';
 import type { AgentStructuredResponse, ProviderOption } from '../../src/types/simulation.ts';
 import { buildAgentPrompt, SIMULATION_SYSTEM_INSTRUCTION } from './simulationSystemPrompt.ts';
 import {
   normalizeAgentResponse,
-  parseJsonFromText,
+  parseAgentEnvelope,
   type AgentGenerateInput,
   type ProviderAdapter,
 } from './types.ts';
@@ -61,45 +61,6 @@ export class GeminiProviderAdapter implements ProviderAdapter {
       contents: buildAgentPrompt(input),
       config: {
         systemInstruction: SIMULATION_SYSTEM_INSTRUCTION,
-        responseMimeType: 'application/json',
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            responseType: {
-              type: Type.STRING,
-              description:
-                'One of: new_simulation, code_modification, bug_fix, explanation, clarification',
-            },
-            summary: {
-              type: Type.STRING,
-              description: 'Concise summary of the generated or modified simulation.',
-            },
-            educationalNotes: {
-              type: Type.STRING,
-              description: 'Brief pedagogical notes for the physics teacher.',
-            },
-            physicsAssumptions: {
-              type: Type.ARRAY,
-              items: { type: Type.STRING },
-              description: 'Key physical assumptions and coordinate conventions.',
-            },
-            changedSections: {
-              type: Type.ARRAY,
-              items: { type: Type.STRING },
-              description: 'List of simulation sections created or updated.',
-            },
-            clarificationQuestion: {
-              type: Type.STRING,
-              description: 'Question for the teacher if responseType is clarification.',
-            },
-            html: {
-              type: Type.STRING,
-              description:
-                'Complete standalone HTML document including Three.js and SIMULATION_METADATA.',
-            },
-          },
-          required: ['responseType', 'summary'],
-        },
       },
     });
 
@@ -108,7 +69,7 @@ export class GeminiProviderAdapter implements ProviderAdapter {
       throw new Error('Gemini returned an empty response.');
     }
 
-    const parsed = parseJsonFromText(rawText);
+    const parsed = parseAgentEnvelope(rawText);
     return normalizeAgentResponse(parsed, this.id, model);
   }
 }

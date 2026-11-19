@@ -11,7 +11,11 @@ import { prepareStandaloneExport, slugifyFilename } from '../src/lib/exporter.ts
 import { validateSimulationHtml } from '../src/lib/htmlValidator.ts';
 import { parseSimulationMetadata } from '../src/lib/metadataParser.ts';
 import { createNextVersion, createSeededProjectileProject } from '../src/lib/storage.ts';
-import { normalizeAgentResponse, parseJsonFromText } from '../server/llm/types.ts';
+import {
+  normalizeAgentResponse,
+  parseAgentEnvelope,
+  parseJsonFromText,
+} from '../server/llm/types.ts';
 
 test('Projectile motion physics matches analytical kinematics equations', () => {
   // Ground launch: v0 = 20 m/s, theta = 30 deg, g = 9.81 m/s^2, y0 = 0
@@ -107,4 +111,28 @@ test('Version management creates sequential immutable snapshots', () => {
   assert.equal(v2.versionNumber, 2);
   assert.equal(v2.source, 'ai');
   assert.notEqual(v2.html, project.versions[0].html);
+});
+
+test('Agent envelope parser extracts delimited metadata JSON and raw standalone HTML', () => {
+  const envelope = `<<<AGENT_JSON>>>
+{
+  "responseType": "new_simulation",
+  "summary": "Created Double Pendulum simulation.",
+  "changedSections": ["3. PHYSICS MODEL", "5. VISUAL OBJECT CREATION"]
+}
+<<<END_AGENT_JSON>>>
+<<<SIMULATION_HTML>>>
+<!DOCTYPE html>
+<html>
+<head><title>Double Pendulum</title></head>
+<body><script type="module">import * as THREE from 'three'; new THREE.WebGLRenderer();</script></body>
+</html>
+<<<END_SIMULATION_HTML>>>`;
+
+  const parsed = parseAgentEnvelope(envelope);
+  const normalized = normalizeAgentResponse(parsed, 'gemini', 'gemini-4-hydrogen');
+  assert.equal(normalized.responseType, 'new_simulation');
+  assert.equal(normalized.summary, 'Created Double Pendulum simulation.');
+  assert.ok(normalized.html?.includes('<title>Double Pendulum</title>'));
+  assert.equal(validateSimulationHtml(normalized.html || '').valid, true);
 });
