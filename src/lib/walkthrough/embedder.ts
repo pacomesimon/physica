@@ -14,10 +14,13 @@ export function buildStandaloneWalkthroughBundle(preferredVoice?: string): strin
   Zero external dependencies; runs independently in any modern browser.
 -->
 <style id="walkthrough-engine-styles">
-  .walkthrough-highlight {
-    outline: 2px solid #38bdf8 !important;
-    outline-offset: 3px !important;
-    box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.24), 0 0 16px rgba(56, 189, 248, 0.28) !important;
+  .walkthrough-highlight,
+  .hud-panel.walkthrough-highlight,
+  .control-group.walkthrough-highlight,
+  button.walkthrough-highlight {
+    outline: 2.5px solid #ef4444;
+    outline-offset: 3px;
+    box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.36), 0 0 18px rgba(239, 68, 68, 0.45);
     border-radius: 6px;
     transition: outline-color 0.2s ease, box-shadow 0.2s ease;
     position: relative;
@@ -25,33 +28,24 @@ export function buildStandaloneWalkthroughBundle(preferredVoice?: string): strin
   }
 
   @media (prefers-reduced-motion: no-preference) {
-    .walkthrough-highlight {
-      animation: wt-soft-ring 2.2s ease-in-out infinite;
+    .walkthrough-highlight,
+    .hud-panel.walkthrough-highlight,
+    .control-group.walkthrough-highlight,
+    button.walkthrough-highlight {
+      animation: wt-red-pulse 1.25s ease-in-out infinite;
     }
-    @keyframes wt-soft-ring {
+    @keyframes wt-red-pulse {
       0%, 100% {
-        box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.22), 0 0 12px rgba(56, 189, 248, 0.22);
+        outline-color: #ef4444;
+        outline-offset: 2px;
+        box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.34), 0 0 14px rgba(239, 68, 68, 0.42);
       }
       50% {
-        box-shadow: 0 0 0 6px rgba(56, 189, 248, 0.34), 0 0 20px rgba(56, 189, 248, 0.34);
+        outline-color: #f87171;
+        outline-offset: 5px;
+        box-shadow: 0 0 0 8px rgba(239, 68, 68, 0.5), 0 0 26px rgba(220, 38, 38, 0.68);
       }
     }
-  }
-
-  #walkthrough-tooltip {
-    position: fixed;
-    z-index: 45;
-    pointer-events: none;
-    max-width: 260px;
-    padding: 7px 10px;
-    background: rgba(15, 23, 42, 0.96);
-    border: 1px solid rgba(56, 189, 248, 0.65);
-    border-radius: 7px;
-    color: #f8fafc;
-    font-size: 11px;
-    line-height: 1.4;
-    box-shadow: 0 8px 20px rgba(2, 6, 23, 0.45);
-    display: none;
   }
 
   #walkthrough-panel {
@@ -402,8 +396,6 @@ export function buildStandaloneWalkthroughBundle(preferredVoice?: string): strin
   }
 </style>
 
-<div id="walkthrough-tooltip" role="tooltip" aria-hidden="true"></div>
-
 <div id="walkthrough-caption" role="region" aria-label="Walkthrough Caption" aria-live="polite" aria-hidden="true">
   <span id="walkthrough-caption-text"></span>
   <button id="wt-btn-caption-close" class="wt-caption-close" type="button" title="Hide captions" aria-label="Hide captions">&times;</button>
@@ -477,32 +469,6 @@ export function buildStandaloneWalkthroughBundle(preferredVoice?: string): strin
   // =========================================================================
   // WALKTHROUGH_HIGHLIGHT_TARGETS
   // =========================================================================
-  let primaryHighlightSelector = null;
-
-  function positionTooltip(targetEl, tooltipText) {
-    const tip = document.getElementById('walkthrough-tooltip');
-    if (!tip) return;
-    if (!targetEl || !tooltipText) {
-      tip.style.display = 'none';
-      tip.setAttribute('aria-hidden', 'true');
-      return;
-    }
-    tip.textContent = tooltipText;
-    tip.style.display = 'block';
-    tip.setAttribute('aria-hidden', 'false');
-
-    const rect = targetEl.getBoundingClientRect();
-    const tipRect = tip.getBoundingClientRect();
-    let top = rect.top - tipRect.height - 10;
-    if (top < 10) {
-      top = Math.min(window.innerHeight - tipRect.height - 10, rect.bottom + 10);
-    }
-    let left = rect.left + rect.width / 2 - tipRect.width / 2;
-    left = Math.max(10, Math.min(window.innerWidth - tipRect.width - 10, left));
-    tip.style.top = Math.round(top) + 'px';
-    tip.style.left = Math.round(left) + 'px';
-  }
-
   function highlightElement(selector) {
     if (!selector || typeof selector !== 'string') return null;
     try {
@@ -516,11 +482,9 @@ export function buildStandaloneWalkthroughBundle(preferredVoice?: string): strin
   }
 
   function clearWalkthroughHighlights() {
-    primaryHighlightSelector = null;
     document.querySelectorAll('.walkthrough-highlight').forEach(function (el) {
       el.classList.remove('walkthrough-highlight');
     });
-    positionTooltip(null, '');
   }
 
   function applySegmentHighlights(segment) {
@@ -541,18 +505,9 @@ export function buildStandaloneWalkthroughBundle(preferredVoice?: string): strin
       });
     }
 
-    let firstMatchedEl = null;
     targets.forEach(function (selector) {
-      const el = highlightElement(selector);
-      if (el && !firstMatchedEl) {
-        firstMatchedEl = el;
-        primaryHighlightSelector = selector;
-      }
+      highlightElement(selector);
     });
-
-    if (firstMatchedEl && segment.tooltip) {
-      positionTooltip(firstMatchedEl, segment.tooltip);
-    }
   }
 
   // =========================================================================
@@ -1411,15 +1366,8 @@ export function buildStandaloneWalkthroughBundle(preferredVoice?: string): strin
       }
     });
 
-    // Reposition active tooltip and caption on window resize
+    // Reposition bottom caption on window resize
     window.addEventListener('resize', function () {
-      if (primaryHighlightSelector && state.activeSegmentIndex >= 0) {
-        const el = document.querySelector(primaryHighlightSelector);
-        const seg = segments[state.activeSegmentIndex];
-        if (el && seg && seg.tooltip) {
-          positionTooltip(el, seg.tooltip);
-        }
-      }
       positionCaption();
     });
 
