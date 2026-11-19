@@ -596,6 +596,12 @@ test('Reference Projectile Motion & Standalone Export: complete walkthrough, sim
   assert.match(pkg.html, /id="walkthrough-caption"/);
   assert.match(pkg.html, /#walkthrough-caption\s*\{[\s\S]*background:\s*rgba\(0,\s*0,\s*0,\s*0\.5\);[\s\S]*color:\s*#ffffff;/);
   assert.match(pkg.html, /id="wt-btn-captions"[^>]*>Hide Captions<\/button>/);
+  assert.match(
+    pkg.html,
+    /<audio id="walkthrough-bg-audio" loop preload="auto" src="https:\/\/cdn\.pixabay\.com\/download\/audio\/2026\/08\/01\/audio_0179371dfe\.mp3"/
+  );
+  assert.match(pkg.html, /id="wt-btn-music"[^>]*>Music: On<\/button>/);
+  assert.match(pkg.html, /setBgAudioMuted:\s*setBgAudioMuted/);
   assert.match(pkg.html, /captionsVisible:\s*true/);
   assert.match(pkg.html, /setCaptionsVisible:\s*setCaptionsVisible/);
   assert.match(pkg.html, /window\.speechSynthesis/);

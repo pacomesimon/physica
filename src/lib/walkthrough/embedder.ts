@@ -1,8 +1,11 @@
 export const WALKTHROUGH_ENGINE_START_MARKER = '<!-- WALKTHROUGH_ENGINE_START -->';
 export const WALKTHROUGH_ENGINE_END_MARKER = '<!-- WALKTHROUGH_ENGINE_END -->';
+export const WALKTHROUGH_BG_AUDIO_URL =
+  'https://cdn.pixabay.com/download/audio/2026/08/01/audio_0179371dfe.mp3';
 
 export function buildStandaloneWalkthroughBundle(preferredVoice?: string): string {
   const safePreferredVoiceLiteral = JSON.stringify(preferredVoice || '');
+  const safeBgAudioUrlLiteral = JSON.stringify(WALKTHROUGH_BG_AUDIO_URL);
   return `${WALKTHROUGH_ENGINE_START_MARKER}
 <!--
   REUSABLE STANDALONE GUIDED WALKTHROUGH ENGINE
@@ -245,14 +248,15 @@ export function buildStandaloneWalkthroughBundle(preferredVoice?: string): strin
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 6px;
+    gap: 5px;
     padding-top: 2px;
+    flex-wrap: wrap;
   }
 
   .wt-view-row .wt-mini-btn {
-    flex: 1;
+    flex: 1 1 auto;
     text-align: center;
-    padding: 4px 8px;
+    padding: 4px 6px;
   }
 
   .wt-mini-btn.wt-active-toggle {
@@ -396,6 +400,8 @@ export function buildStandaloneWalkthroughBundle(preferredVoice?: string): strin
   }
 </style>
 
+<audio id="walkthrough-bg-audio" loop preload="auto" src="${WALKTHROUGH_BG_AUDIO_URL}" aria-hidden="true"></audio>
+
 <div id="walkthrough-caption" role="region" aria-label="Walkthrough Caption" aria-live="polite" aria-hidden="true">
   <span id="walkthrough-caption-text"></span>
   <button id="wt-btn-caption-close" class="wt-caption-close" type="button" title="Hide captions" aria-label="Hide captions">&times;</button>
@@ -452,6 +458,7 @@ export function buildStandaloneWalkthroughBundle(preferredVoice?: string): strin
       <div class="wt-view-row">
         <button id="wt-btn-captions" class="wt-mini-btn wt-active-toggle" type="button" aria-pressed="true">Hide Captions</button>
         <button id="wt-btn-transcript" class="wt-mini-btn" type="button" aria-expanded="false">Show Transcript</button>
+        <button id="wt-btn-music" class="wt-mini-btn wt-active-toggle" type="button" aria-pressed="true" title="Toggle background music">Music: On</button>
       </div>
 
       <div id="wt-status-banner" class="wt-status-banner" role="status"></div>
@@ -589,7 +596,82 @@ export function buildStandaloneWalkthroughBundle(preferredVoice?: string): strin
         ${safePreferredVoiceLiteral},
       voices: [],
       captionsVisible: true,
+      bgAudioMuted: false,
+      bgAudioVolume: 0.16,
+      bgAudioUrl:
+        (config && typeof config.backgroundAudioUrl === 'string' && config.backgroundAudioUrl) ||
+        ${safeBgAudioUrlLiteral},
+      bgAudioFadeTimer: null,
     };
+
+    const bgAudioEl = document.getElementById('walkthrough-bg-audio');
+    if (bgAudioEl) {
+      if (state.bgAudioUrl && bgAudioEl.getAttribute('src') !== state.bgAudioUrl) {
+        bgAudioEl.setAttribute('src', state.bgAudioUrl);
+      }
+      bgAudioEl.loop = true;
+      bgAudioEl.volume = state.bgAudioVolume;
+    }
+
+    function clearBgAudioFade() {
+      if (state.bgAudioFadeTimer) {
+        clearInterval(state.bgAudioFadeTimer);
+        state.bgAudioFadeTimer = null;
+      }
+    }
+
+    function startBgAudio() {
+      if (!bgAudioEl || state.bgAudioMuted) return;
+      clearBgAudioFade();
+      try {
+        bgAudioEl.muted = false;
+        const targetVol = Math.min(1, Math.max(0, state.bgAudioVolume));
+        if (bgAudioEl.paused) {
+          bgAudioEl.volume = Math.min(0.02, targetVol);
+          const playPromise = bgAudioEl.play();
+          if (playPromise && typeof playPromise.catch === 'function') {
+            playPromise.catch(function () {});
+          }
+        }
+        const steps = 8;
+        let step = 0;
+        const startVol = bgAudioEl.volume;
+        state.bgAudioFadeTimer = setInterval(function () {
+          step += 1;
+          const ratio = Math.min(1, step / steps);
+          bgAudioEl.volume = startVol + (targetVol - startVol) * ratio;
+          if (step >= steps) {
+            clearBgAudioFade();
+          }
+        }, 40);
+      } catch (e) {}
+    }
+
+    function pauseBgAudio(resetToStart) {
+      if (!bgAudioEl) return;
+      clearBgAudioFade();
+      try {
+        bgAudioEl.pause();
+        if (resetToStart) {
+          bgAudioEl.currentTime = 0;
+        }
+      } catch (e) {}
+    }
+
+    function setBgAudioMuted(muted) {
+      state.bgAudioMuted = Boolean(muted);
+      const btnMusic = document.getElementById('wt-btn-music');
+      if (btnMusic) {
+        btnMusic.textContent = state.bgAudioMuted ? 'Music: Off' : 'Music: On';
+        btnMusic.setAttribute('aria-pressed', state.bgAudioMuted ? 'false' : 'true');
+        btnMusic.classList.toggle('wt-active-toggle', !state.bgAudioMuted);
+      }
+      if (state.bgAudioMuted) {
+        pauseBgAudio(false);
+      } else if (state.status === 'playing') {
+        startBgAudio();
+      }
+    }
 
     function loadVoices() {
       if (!speechSupported) return;
@@ -1105,6 +1187,7 @@ export function buildStandaloneWalkthroughBundle(preferredVoice?: string): strin
       const nextIdx = state.activeSegmentIndex + 1;
       if (nextIdx >= segments.length) {
         stopTimers();
+        pauseBgAudio(true);
         state.status = 'completed';
         state.walkthroughTimeMs = totalDurationMs;
         clearWalkthroughHighlights();
@@ -1127,6 +1210,7 @@ export function buildStandaloneWalkthroughBundle(preferredVoice?: string): strin
       state.walkthroughTimeMs = 0;
       state.segmentElapsedBeforePauseMs = 0;
       captureCheckpoint('start', 0, segments[0].id);
+      startBgAudio();
       speakSegment(0, false);
     }
 
@@ -1134,6 +1218,7 @@ export function buildStandaloneWalkthroughBundle(preferredVoice?: string): strin
       if (state.status !== 'playing') return;
       state.status = 'paused';
       stopTimers();
+      pauseBgAudio(false);
       state.segmentElapsedBeforePauseMs += Math.max(0, Date.now() - state.segmentPlayStartedWallMs);
       const seg = segments[state.activeSegmentIndex];
       if (seg) {
@@ -1158,6 +1243,7 @@ export function buildStandaloneWalkthroughBundle(preferredVoice?: string): strin
 
       state.segmentPlayStartedWallMs = Date.now();
       startProgressTicker();
+      startBgAudio();
 
       if (speechSupported && window.speechSynthesis.paused) {
         try {
@@ -1177,6 +1263,7 @@ export function buildStandaloneWalkthroughBundle(preferredVoice?: string): strin
       state.utteranceToken += 1;
       stopTimers();
       cancelSpeech();
+      pauseBgAudio(true);
       clearWalkthroughHighlights();
       setBanner('');
 
@@ -1215,9 +1302,11 @@ export function buildStandaloneWalkthroughBundle(preferredVoice?: string): strin
 
       if (autoPlay !== false) {
         state.status = 'playing';
+        startBgAudio();
         speakSegment(index, false);
       } else {
         state.status = 'paused';
+        pauseBgAudio(false);
         captureCheckpoint('pause', index, seg.id);
         updateUI(true);
       }
@@ -1253,6 +1342,7 @@ export function buildStandaloneWalkthroughBundle(preferredVoice?: string): strin
     const btnTranscript = document.getElementById('wt-btn-transcript');
     const btnCaptions = document.getElementById('wt-btn-captions');
     const btnCaptionClose = document.getElementById('wt-btn-caption-close');
+    const btnMusic = document.getElementById('wt-btn-music');
     const btnMinimize = document.getElementById('wt-btn-minimize');
 
     if (btnPlay) btnPlay.addEventListener('click', play);
@@ -1298,6 +1388,11 @@ export function buildStandaloneWalkthroughBundle(preferredVoice?: string): strin
     if (btnCaptionClose) {
       btnCaptionClose.addEventListener('click', function () {
         setCaptionsVisible(false);
+      });
+    }
+    if (btnMusic) {
+      btnMusic.addEventListener('click', function () {
+        setBgAudioMuted(!state.bgAudioMuted);
       });
     }
     if (btnTranscript) {
@@ -1381,6 +1476,7 @@ export function buildStandaloneWalkthroughBundle(preferredVoice?: string): strin
     window.addEventListener('beforeunload', function () {
       stopTimers();
       cancelSpeech();
+      pauseBgAudio(true);
     });
 
     // Allow Physica Studio host to update preferred narration voice live without reloading WebGL
@@ -1404,6 +1500,7 @@ export function buildStandaloneWalkthroughBundle(preferredVoice?: string): strin
       stop: stop,
       seekToSegment: seekToSegment,
       setCaptionsVisible: setCaptionsVisible,
+      setBgAudioMuted: setBgAudioMuted,
       setPreferredVoice: function (voiceURI) {
         const nextVoice = typeof voiceURI === 'string' ? voiceURI : '';
         window.WALKTHROUGH_PREFERRED_VOICE = nextVoice;
@@ -1425,6 +1522,8 @@ export function buildStandaloneWalkthroughBundle(preferredVoice?: string): strin
           speechRate: state.speechRate,
           preferredVoice: state.preferredVoice,
           captionsVisible: state.captionsVisible,
+          bgAudioMuted: state.bgAudioMuted,
+          bgAudioUrl: state.bgAudioUrl,
           speechSupported: speechSupported,
         };
       },
