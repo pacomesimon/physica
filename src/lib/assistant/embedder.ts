@@ -330,7 +330,6 @@ export function buildHybridAssistantBundle(
     border-radius: 10px;
     line-height: 1.5;
     font-size: 12px;
-    white-space: pre-wrap;
     word-break: break-word;
   }
 
@@ -338,6 +337,7 @@ export function buildHybridAssistantBundle(
     background: #0284c7;
     color: #ffffff;
     border-bottom-right-radius: 3px;
+    white-space: pre-wrap;
   }
 
   .physica-ai-msg.ai-bot .physica-ai-bubble {
@@ -351,6 +351,110 @@ export function buildHybridAssistantBundle(
     background: rgba(127, 29, 29, 0.55);
     border-color: rgba(248, 113, 113, 0.45);
     color: #fee2e2;
+  }
+
+  .physica-ai-bubble > :first-child {
+    margin-top: 0;
+  }
+
+  .physica-ai-bubble > :last-child {
+    margin-bottom: 0;
+  }
+
+  .physica-ai-md-p {
+    margin: 0 0 7px 0;
+  }
+
+  .physica-ai-md-h {
+    margin: 9px 0 4px 0;
+    font-weight: 700;
+    color: #f8fafc;
+    line-height: 1.35;
+  }
+
+  .physica-ai-md-h1 { font-size: 13.5px; }
+  .physica-ai-md-h2 { font-size: 13px; }
+  .physica-ai-md-h3,
+  .physica-ai-md-h4 { font-size: 12.25px; color: #bae6fd; }
+
+  .physica-ai-md-list {
+    margin: 0 0 7px 0;
+    padding-left: 18px;
+  }
+
+  .physica-ai-md-list li {
+    margin: 2px 0;
+  }
+
+  .physica-ai-md-code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 11px;
+    background: rgba(2, 6, 23, 0.65);
+    border: 1px solid rgba(148, 163, 184, 0.24);
+    color: #7dd3fc;
+    padding: 1px 4px;
+    border-radius: 4px;
+  }
+
+  .physica-ai-md-pre {
+    margin: 6px 0 8px 0;
+    padding: 8px 10px;
+    background: rgba(2, 6, 23, 0.84);
+    border: 1px solid rgba(148, 163, 184, 0.25);
+    border-radius: 7px;
+    overflow-x: auto;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 11px;
+    line-height: 1.45;
+    color: #e2e8f0;
+    white-space: pre;
+  }
+
+  .physica-ai-md-quote {
+    margin: 6px 0 8px 0;
+    padding: 4px 0 4px 10px;
+    border-left: 2.5px solid #38bdf8;
+    color: #cbd5e1;
+  }
+
+  .physica-ai-md-hr {
+    border: none;
+    border-top: 1px solid rgba(148, 163, 184, 0.25);
+    margin: 8px 0;
+  }
+
+  .physica-ai-md-link {
+    color: #38bdf8;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+
+  .physica-ai-md-link:hover {
+    color: #7dd3fc;
+  }
+
+  .physica-ai-md-table-wrap {
+    margin: 6px 0 8px 0;
+    overflow-x: auto;
+  }
+
+  .physica-ai-md-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 11px;
+  }
+
+  .physica-ai-md-table th,
+  .physica-ai-md-table td {
+    border: 1px solid rgba(148, 163, 184, 0.24);
+    padding: 4px 7px;
+    text-align: left;
+  }
+
+  .physica-ai-md-table th {
+    background: rgba(15, 23, 42, 0.85);
+    font-weight: 600;
+    color: #e2e8f0;
   }
 
   .physica-ai-source-tag {
@@ -772,6 +876,359 @@ export function buildHybridAssistantBundle(
     messagesEl.appendChild(wrap);
   }
 
+  function isSafeHttpUrl(rawUrl) {
+    try {
+      const parsed = new URL(rawUrl);
+      return parsed.protocol === 'https:' || parsed.protocol === 'http:';
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function appendInlineMarkdown(parent, text) {
+    const str = String(text || '');
+    const BT = String.fromCharCode(96);
+    let i = 0;
+    let buf = '';
+
+    function flush() {
+      if (buf) {
+        parent.appendChild(document.createTextNode(buf));
+        buf = '';
+      }
+    }
+
+    while (i < str.length) {
+      // Escaped markdown punctuation
+      if (str[i] === '\\\\' && i + 1 < str.length && '\\\\*_~[]()'.indexOf(str[i + 1]) !== -1) {
+        buf += str[i + 1];
+        i += 2;
+        continue;
+      }
+
+      // Inline code: \`code\`
+      if (str[i] === BT) {
+        const end = str.indexOf(BT, i + 1);
+        if (end !== -1) {
+          flush();
+          const codeEl = document.createElement('code');
+          codeEl.className = 'physica-ai-md-code';
+          codeEl.textContent = str.slice(i + 1, end);
+          parent.appendChild(codeEl);
+          i = end + 1;
+          continue;
+        }
+      }
+
+      // Link: [label](url)
+      if (str[i] === '[') {
+        const closeBracket = str.indexOf(']', i + 1);
+        if (closeBracket !== -1 && str[closeBracket + 1] === '(') {
+          const closeParen = str.indexOf(')', closeBracket + 2);
+          if (closeParen !== -1) {
+            const label = str.slice(i + 1, closeBracket);
+            const href = str.slice(closeBracket + 2, closeParen).trim();
+            flush();
+            if (isSafeHttpUrl(href)) {
+              const a = document.createElement('a');
+              a.className = 'physica-ai-md-link';
+              a.href = href;
+              a.target = '_blank';
+              a.rel = 'noopener noreferrer';
+              appendInlineMarkdown(a, label);
+              parent.appendChild(a);
+            } else {
+              appendInlineMarkdown(parent, label);
+            }
+            i = closeParen + 1;
+            continue;
+          }
+        }
+      }
+
+      // Bold + Italic: ***text***
+      if (str.slice(i, i + 3) === '***') {
+        const end = str.indexOf('***', i + 3);
+        if (end !== -1 && end > i + 3) {
+          flush();
+          const strong = document.createElement('strong');
+          const em = document.createElement('em');
+          appendInlineMarkdown(em, str.slice(i + 3, end));
+          strong.appendChild(em);
+          parent.appendChild(strong);
+          i = end + 3;
+          continue;
+        }
+      }
+
+      // Bold: **text** or __text__
+      if (str.slice(i, i + 2) === '**' || str.slice(i, i + 2) === '__') {
+        const delim = str.slice(i, i + 2);
+        const end = str.indexOf(delim, i + 2);
+        if (end !== -1 && end > i + 2) {
+          flush();
+          const strong = document.createElement('strong');
+          appendInlineMarkdown(strong, str.slice(i + 2, end));
+          parent.appendChild(strong);
+          i = end + 2;
+          continue;
+        }
+      }
+
+      // Strikethrough: ~~text~~
+      if (str.slice(i, i + 2) === '~~') {
+        const end = str.indexOf('~~', i + 2);
+        if (end !== -1 && end > i + 2) {
+          flush();
+          const del = document.createElement('del');
+          appendInlineMarkdown(del, str.slice(i + 2, end));
+          parent.appendChild(del);
+          i = end + 2;
+          continue;
+        }
+      }
+
+      // Italic: *text* (avoid matching list bullets or stray spaces)
+      if (str[i] === '*' && str[i + 1] && str[i + 1] !== ' ' && str[i + 1] !== '*') {
+        const end = str.indexOf('*', i + 1);
+        if (end !== -1 && end > i + 1 && str[end - 1] !== ' ') {
+          flush();
+          const em = document.createElement('em');
+          appendInlineMarkdown(em, str.slice(i + 1, end));
+          parent.appendChild(em);
+          i = end + 1;
+          continue;
+        }
+      }
+
+      // Italic: _text_ (word-boundary guarded so physics identifiers like m_1 + m_2 stay intact)
+      if (
+        str[i] === '_' &&
+        str[i + 1] &&
+        str[i + 1] !== ' ' &&
+        str[i + 1] !== '_' &&
+        (i === 0 || !/[A-Za-z0-9]/.test(str[i - 1]))
+      ) {
+        const end = str.indexOf('_', i + 1);
+        if (
+          end !== -1 &&
+          end > i + 1 &&
+          str[end - 1] !== ' ' &&
+          (end + 1 === str.length || !/[A-Za-z0-9]/.test(str[end + 1]))
+        ) {
+          flush();
+          const em = document.createElement('em');
+          appendInlineMarkdown(em, str.slice(i + 1, end));
+          parent.appendChild(em);
+          i = end + 1;
+          continue;
+        }
+      }
+
+      buf += str[i];
+      i += 1;
+    }
+
+    flush();
+  }
+
+  function parseTableRowCells(line) {
+    return line
+      .trim()
+      .replace(/^\\|/, '')
+      .replace(/\\|$/, '')
+      .split('|')
+      .map(function (cell) {
+        return cell.trim();
+      });
+  }
+
+  function isTableSeparatorLine(line) {
+    const trimmed = line.trim();
+    if (trimmed.indexOf('|') === -1 && trimmed.indexOf('-') === -1) return false;
+    return /^\\|?\\s*:?-{3,}:?\\s*(\\|\\s*:?-{3,}:?\\s*)+\\|?$/.test(trimmed);
+  }
+
+  function renderMarkdownInto(container, source) {
+    container.textContent = '';
+    const text = String(source || '').replace(/\\r\\n?/g, '\\n');
+    if (!text.trim()) return;
+
+    const lines = text.split('\\n');
+    const FENCE = String.fromCharCode(96, 96, 96);
+    let idx = 0;
+
+    function isBlockBoundary(line, nextLine) {
+      const t = line.trim();
+      if (!t) return true;
+      if (t.startsWith(FENCE)) return true;
+      if (/^#{1,6}\\s+/.test(t)) return true;
+      if (/^(?:-{3,}|[*]{3,}|_{3,})\\s*$/.test(t)) return true;
+      if (/^>\\s?/.test(t)) return true;
+      if (/^\\s*[-*+•]\\s+/.test(line)) return true;
+      if (/^\\s*\\d+[.)]\\s+/.test(line)) return true;
+      if (t.indexOf('|') !== -1 && typeof nextLine === 'string' && isTableSeparatorLine(nextLine)) {
+        return true;
+      }
+      return false;
+    }
+
+    while (idx < lines.length) {
+      const rawLine = lines[idx];
+      const trimmed = rawLine.trim();
+
+      if (!trimmed) {
+        idx += 1;
+        continue;
+      }
+
+      // Fenced code block
+      if (trimmed.startsWith(FENCE)) {
+        const codeLines = [];
+        idx += 1;
+        while (idx < lines.length && !lines[idx].trim().startsWith(FENCE)) {
+          codeLines.push(lines[idx]);
+          idx += 1;
+        }
+        if (idx < lines.length && lines[idx].trim().startsWith(FENCE)) {
+          idx += 1;
+        }
+        const pre = document.createElement('pre');
+        pre.className = 'physica-ai-md-pre';
+        const code = document.createElement('code');
+        code.textContent = codeLines.join('\\n');
+        pre.appendChild(code);
+        container.appendChild(pre);
+        continue;
+      }
+
+      // Headings (# .. ######)
+      const headingMatch = trimmed.match(/^(#{1,6})\\s+(.+)$/);
+      if (headingMatch) {
+        const level = Math.min(headingMatch[1].length, 4);
+        const tag = level === 1 ? 'h3' : level === 2 ? 'h4' : 'h5';
+        const hEl = document.createElement(tag);
+        hEl.className = 'physica-ai-md-h physica-ai-md-h' + level;
+        appendInlineMarkdown(hEl, headingMatch[2]);
+        container.appendChild(hEl);
+        idx += 1;
+        continue;
+      }
+
+      // Horizontal rule
+      if (/^(?:-{3,}|[*]{3,}|_{3,})\\s*$/.test(trimmed)) {
+        const hr = document.createElement('hr');
+        hr.className = 'physica-ai-md-hr';
+        container.appendChild(hr);
+        idx += 1;
+        continue;
+      }
+
+      // Blockquote
+      if (/^>\\s?/.test(trimmed)) {
+        const quoteLines = [];
+        while (idx < lines.length && /^>\\s?/.test(lines[idx].trim())) {
+          quoteLines.push(lines[idx].trim().replace(/^>\\s?/, ''));
+          idx += 1;
+        }
+        const bq = document.createElement('blockquote');
+        bq.className = 'physica-ai-md-quote';
+        renderMarkdownInto(bq, quoteLines.join('\\n'));
+        container.appendChild(bq);
+        continue;
+      }
+
+      // Pipe table
+      if (trimmed.indexOf('|') !== -1 && idx + 1 < lines.length && isTableSeparatorLine(lines[idx + 1])) {
+        const headers = parseTableRowCells(rawLine);
+        idx += 2;
+        const bodyRows = [];
+        while (idx < lines.length && lines[idx].trim() && lines[idx].indexOf('|') !== -1) {
+          bodyRows.push(parseTableRowCells(lines[idx]));
+          idx += 1;
+        }
+        const wrap = document.createElement('div');
+        wrap.className = 'physica-ai-md-table-wrap';
+        const table = document.createElement('table');
+        table.className = 'physica-ai-md-table';
+        const thead = document.createElement('thead');
+        const headTr = document.createElement('tr');
+        headers.forEach(function (cell) {
+          const th = document.createElement('th');
+          appendInlineMarkdown(th, cell);
+          headTr.appendChild(th);
+        });
+        thead.appendChild(headTr);
+        table.appendChild(thead);
+
+        if (bodyRows.length) {
+          const tbody = document.createElement('tbody');
+          bodyRows.forEach(function (row) {
+            const tr = document.createElement('tr');
+            row.forEach(function (cell) {
+              const td = document.createElement('td');
+              appendInlineMarkdown(td, cell);
+              tr.appendChild(td);
+            });
+            tbody.appendChild(tr);
+          });
+          table.appendChild(tbody);
+        }
+        wrap.appendChild(table);
+        container.appendChild(wrap);
+        continue;
+      }
+
+      // Unordered list
+      if (/^\\s*[-*+•]\\s+/.test(rawLine)) {
+        const ul = document.createElement('ul');
+        ul.className = 'physica-ai-md-list';
+        while (idx < lines.length && /^\\s*[-*+•]\\s+/.test(lines[idx])) {
+          const li = document.createElement('li');
+          appendInlineMarkdown(li, lines[idx].replace(/^\\s*[-*+•]\\s+/, ''));
+          ul.appendChild(li);
+          idx += 1;
+        }
+        container.appendChild(ul);
+        continue;
+      }
+
+      // Ordered list
+      if (/^\\s*\\d+[.)]\\s+/.test(rawLine)) {
+        const ol = document.createElement('ol');
+        ol.className = 'physica-ai-md-list';
+        while (idx < lines.length && /^\\s*\\d+[.)]\\s+/.test(lines[idx])) {
+          const li = document.createElement('li');
+          appendInlineMarkdown(li, lines[idx].replace(/^\\s*\\d+[.)]\\s+/, ''));
+          ol.appendChild(li);
+          idx += 1;
+        }
+        container.appendChild(ol);
+        continue;
+      }
+
+      // Paragraph (accumulate lines until blank line or next block)
+      const paraLines = [];
+      while (idx < lines.length) {
+        if (paraLines.length > 0 && isBlockBoundary(lines[idx], lines[idx + 1])) {
+          break;
+        }
+        paraLines.push(lines[idx]);
+        idx += 1;
+        if (idx < lines.length && !lines[idx].trim()) {
+          break;
+        }
+      }
+      const p = document.createElement('p');
+      p.className = 'physica-ai-md-p';
+      paraLines.forEach(function (pLine, lineIdx) {
+        if (lineIdx > 0) p.appendChild(document.createElement('br'));
+        appendInlineMarkdown(p, pLine);
+      });
+      container.appendChild(p);
+    }
+  }
+
   function appendMessage(role, text, options) {
     const opts = options || {};
     const emptyEl = messagesEl.querySelector('.physica-ai-empty');
@@ -785,7 +1242,11 @@ export function buildHybridAssistantBundle(
 
     const bubble = document.createElement('div');
     bubble.className = 'physica-ai-bubble';
-    bubble.textContent = text;
+    if (role === 'user') {
+      bubble.textContent = text;
+    } else {
+      renderMarkdownInto(bubble, text);
+    }
     msgEl.appendChild(bubble);
 
     let sourceEl = null;
@@ -859,7 +1320,7 @@ export function buildHybridAssistantBundle(
           const chunkText = typeof chunk.text === 'function' ? chunk.text() : '';
           if (chunkText) {
             streamedText += chunkText;
-            botUi.bubble.textContent = streamedText;
+            renderMarkdownInto(botUi.bubble, streamedText);
             messagesEl.scrollTop = messagesEl.scrollHeight;
           }
         }
@@ -879,7 +1340,7 @@ export function buildHybridAssistantBundle(
       }
 
       const finalText = (streamedText || '').trim() || 'No response returned by the model.';
-      botUi.bubble.textContent = finalText;
+      renderMarkdownInto(botUi.bubble, finalText);
       const usedOnDevice = inferenceSource === firebaseInferenceSourceEnum.ON_DEVICE || inferenceSource === 'on_device';
       if (botUi.sourceEl) {
         botUi.sourceEl.textContent = usedOnDevice ? 'Offline · On-Device AI' : 'Online · Gemini Cloud';
@@ -894,7 +1355,7 @@ export function buildHybridAssistantBundle(
       let fallbackReply = null;
       try {
         fallbackReply = await runDirectOnDeviceFallback(enrichedQuestion, function (partial) {
-          botUi.bubble.textContent = partial;
+          renderMarkdownInto(botUi.bubble, partial);
           messagesEl.scrollTop = messagesEl.scrollHeight;
         });
       } catch (_) {
@@ -902,7 +1363,7 @@ export function buildHybridAssistantBundle(
       }
 
       if (fallbackReply) {
-        botUi.bubble.textContent = fallbackReply;
+        renderMarkdownInto(botUi.bubble, fallbackReply);
         if (botUi.sourceEl) {
           botUi.sourceEl.textContent = 'Offline · On-Device AI';
           botUi.sourceEl.className = 'physica-ai-source-tag ai-src-device';
@@ -911,7 +1372,7 @@ export function buildHybridAssistantBundle(
         conversationHistory.push({ role: 'model', text: fallbackReply });
       } else {
         botUi.msgEl.classList.add('ai-error');
-        botUi.bubble.textContent = formatHelpfulError(firebaseErr);
+        renderMarkdownInto(botUi.bubble, formatHelpfulError(firebaseErr));
         if (botUi.sourceEl) {
           botUi.sourceEl.textContent = 'Hybrid AI unavailable';
         }

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Download,
   History,
@@ -9,7 +9,12 @@ import {
   ExternalLink,
   Link2,
   Loader2,
+  Cloud,
+  LogIn,
+  LogOut,
+  UploadCloud,
 } from 'lucide-react';
+import type { User } from 'firebase/auth';
 import { copyTextToClipboard, type HostedSimulationLink } from '../lib/exporter';
 
 interface TopBarProps {
@@ -27,6 +32,12 @@ interface TopBarProps {
   hostedUrl: string | null;
   isPublishingHost: boolean;
   onEnsureHostedLink: () => Promise<HostedSimulationLink | null>;
+  user: User | null;
+  isSigningIn: boolean;
+  cloudSyncStatus: 'local' | 'syncing' | 'synced' | 'error';
+  onSignIn: () => Promise<void>;
+  onSignOut: () => Promise<void>;
+  onSyncLocalToCloud: () => Promise<void>;
 }
 
 export const TopBar: React.FC<TopBarProps> = ({
@@ -44,15 +55,34 @@ export const TopBar: React.FC<TopBarProps> = ({
   hostedUrl,
   isPublishingHost,
   onEnsureHostedLink,
+  user,
+  isSigningIn,
+  cloudSyncStatus,
+  onSignIn,
+  onSignOut,
+  onSyncLocalToCloud,
 }) => {
   const [editing, setEditing] = useState(false);
   const [draftTitle, setDraftTitle] = useState(projectTitle);
   const [copyState, setCopyState] = useState<'idle' | 'copying' | 'copied' | 'error'>('idle');
   const [preparingPreview, setPreparingPreview] = useState(false);
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const accountMenuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     setDraftTitle(projectTitle);
   }, [projectTitle]);
+
+  useEffect(() => {
+    if (!accountMenuOpen) return;
+    const handleOutside = (e: MouseEvent) => {
+      if (accountMenuRef.current && !accountMenuRef.current.contains(e.target as Node)) {
+        setAccountMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutside);
+    return () => document.removeEventListener('mousedown', handleOutside);
+  }, [accountMenuOpen]);
 
   const commitRename = () => {
     const cleaned = draftTitle.trim();
@@ -108,6 +138,8 @@ export const TopBar: React.FC<TopBarProps> = ({
     hour: '2-digit',
     minute: '2-digit',
   });
+
+  const userInitial = (user?.displayName || user?.email || 'U').trim().charAt(0).toUpperCase();
 
   return (
     <header className="h-12 shrink-0 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 flex items-center justify-between gap-3">
@@ -172,7 +204,7 @@ export const TopBar: React.FC<TopBarProps> = ({
             type="button"
             onClick={() => setEditing(true)}
             title="Click to rename simulation project"
-            className="group flex items-center gap-1.5 text-sm font-medium text-slate-700 dark:text-slate-200 hover:text-slate-900 dark:hover:text-white truncate max-w-[220px] rounded px-1.5 py-0.5 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+            className="group flex items-center gap-1.5 text-sm font-medium text-slate-700 dark:text-slate-200 hover:text-slate-900 dark:hover:text-white truncate max-w-[200px] rounded px-1.5 py-0.5 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
           >
             <span className="truncate">{projectTitle}</span>
             <Pencil className="w-3 h-3 opacity-0 group-hover:opacity-70 shrink-0" />
@@ -180,7 +212,15 @@ export const TopBar: React.FC<TopBarProps> = ({
         )}
 
         <span className="hidden xl:inline text-xs text-slate-400 dark:text-slate-500 tabular-nums whitespace-nowrap shrink-0 pl-2">
-          {isDirty ? 'Unsaved edits' : `Saved ${formattedSaved}`}
+          {user
+            ? cloudSyncStatus === 'syncing'
+              ? 'Syncing to Cloud…'
+              : cloudSyncStatus === 'error'
+                ? 'Saved locally (Cloud retry)'
+                : `Cloud synced ${formattedSaved}`
+            : isDirty
+              ? 'Unsaved edits'
+              : `Saved locally ${formattedSaved}`}
         </span>
       </div>
 
@@ -204,7 +244,8 @@ export const TopBar: React.FC<TopBarProps> = ({
             className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-md hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-blue-600"
           >
             <ExternalLink className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
-            <span>Preview Webpage</span>
+            <span className="hidden lg:inline">Preview Webpage</span>
+            <span className="lg:hidden">Preview</span>
           </a>
         ) : (
           <button
@@ -219,7 +260,8 @@ export const TopBar: React.FC<TopBarProps> = ({
             ) : (
               <ExternalLink className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
             )}
-            <span>Preview Webpage</span>
+            <span className="hidden lg:inline">Preview Webpage</span>
+            <span className="lg:hidden">Preview</span>
           </button>
         )}
 
@@ -248,7 +290,8 @@ export const TopBar: React.FC<TopBarProps> = ({
           ) : (
             <>
               <Link2 className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400" />
-              <span>Copy Link</span>
+              <span className="hidden lg:inline">Copy Link</span>
+              <span className="lg:hidden">Copy</span>
             </>
           )}
         </button>
@@ -259,8 +302,114 @@ export const TopBar: React.FC<TopBarProps> = ({
           className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md transition-colors whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
         >
           <Download className="w-3.5 h-3.5" />
-          <span>Download HTML</span>
+          <span className="hidden md:inline">Download HTML</span>
+          <span className="md:hidden">Export</span>
         </button>
+
+        <div className="h-5 w-px bg-slate-200 dark:bg-slate-800 mx-0.5" aria-hidden="true" />
+
+        {user ? (
+          <div className="relative" ref={accountMenuRef}>
+            <button
+              type="button"
+              onClick={() => setAccountMenuOpen((open) => !open)}
+              title={`Signed in as ${user.email || user.displayName || 'Google User'} (Cloud Sync Active)`}
+              aria-expanded={accountMenuOpen}
+              aria-haspopup="menu"
+              className="inline-flex items-center gap-1.5 pl-1.5 pr-2.5 py-1 text-xs font-medium text-slate-700 dark:text-slate-200 bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-md hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0"
+            >
+              {user.photoURL ? (
+                <img
+                  src={user.photoURL}
+                  alt={user.displayName || 'Account avatar'}
+                  referrerPolicy="no-referrer"
+                  className="w-5 h-5 rounded-full object-cover"
+                />
+              ) : (
+                <span className="w-5 h-5 rounded-full bg-blue-600 text-white text-[10px] font-semibold inline-flex items-center justify-center">
+                  {userInitial}
+                </span>
+              )}
+              <Cloud
+                className={`w-3.5 h-3.5 ${
+                  cloudSyncStatus === 'syncing'
+                    ? 'text-blue-500 animate-pulse'
+                    : cloudSyncStatus === 'error'
+                      ? 'text-amber-500'
+                      : 'text-emerald-600 dark:text-emerald-400'
+                }`}
+              />
+              <span className="hidden xl:inline max-w-[96px] truncate">
+                {user.displayName?.split(' ')[0] || 'Account'}
+              </span>
+            </button>
+
+            {accountMenuOpen && (
+              <div
+                role="menu"
+                className="absolute right-0 mt-1.5 w-60 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg shadow-xl py-1.5 z-50 text-xs"
+              >
+                <div className="px-3 py-2 border-b border-slate-100 dark:border-slate-800">
+                  <div className="font-medium text-slate-900 dark:text-slate-100 truncate">
+                    {user.displayName || 'Google Account'}
+                  </div>
+                  <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                    {user.email}
+                  </div>
+                  <div className="mt-1 inline-flex items-center gap-1 text-[11px] text-emerald-700 dark:text-emerald-400">
+                    <Cloud className="w-3 h-3" />
+                    <span>
+                      {cloudSyncStatus === 'syncing'
+                        ? 'Syncing projects with Firestore…'
+                        : 'Firestore cloud sync active'}
+                    </span>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setAccountMenuOpen(false);
+                    void onSyncLocalToCloud();
+                  }}
+                  className="w-full px-3 py-2 text-left flex items-center gap-2 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800"
+                >
+                  <UploadCloud className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+                  <span>Sync Workspace to Cloud</span>
+                </button>
+
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setAccountMenuOpen(false);
+                    void onSignOut();
+                  }}
+                  className="w-full px-3 py-2 text-left flex items-center gap-2 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800"
+                >
+                  <LogOut className="w-3.5 h-3.5 text-slate-500" />
+                  <span>Sign Out (Continue as Guest)</span>
+                </button>
+              </div>
+            )}
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => void onSignIn()}
+            disabled={isSigningIn}
+            title="Optional: Sign in with Google to sync projects & preferences to Firestore"
+            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-md hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-60 transition-colors whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-blue-600"
+          >
+            {isSigningIn ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-600" />
+            ) : (
+              <LogIn className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+            )}
+            <span>Sign in</span>
+          </button>
+        )}
       </div>
     </header>
   );

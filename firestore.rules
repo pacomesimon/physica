@@ -1,0 +1,320 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Pillar 0: Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Reusable Hardened Primitives ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isVerified() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // --- Validation Blueprints (synchronized verbatim with firebase-blueprint.json) ---
+    function isValidUserProfile(data, userId) {
+      return data.keys().hasAll([
+          'uid',
+          'displayName',
+          'email',
+          'photoURL',
+          'theme',
+          'providerId',
+          'model',
+          'autoSnapshot',
+          'walkthroughVoiceURI',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'uid',
+          'displayName',
+          'email',
+          'photoURL',
+          'theme',
+          'providerId',
+          'model',
+          'autoSnapshot',
+          'walkthroughVoiceURI',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        isValidId(data.uid) &&
+        data.uid == request.auth.uid &&
+        data.uid == userId &&
+        data.displayName is string && data.displayName.size() <= 120 &&
+        data.email is string && data.email.size() <= 254 &&
+        data.photoURL is string && data.photoURL.size() <= 500 &&
+        data.theme is string && data.theme.size() <= 16 && (data.theme == 'light' || data.theme == 'dark') &&
+        data.providerId is string && data.providerId.size() <= 32 && (data.providerId == 'gemini' || data.providerId == 'openai-compatible') &&
+        data.model is string && data.model.size() <= 80 &&
+        data.autoSnapshot is bool &&
+        data.walkthroughVoiceURI is string && data.walkthroughVoiceURI.size() <= 200 &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidProject(data, userId) {
+      return data.keys().hasAll([
+          'ownerId',
+          'title',
+          'subject',
+          'description',
+          'currentHtml',
+          'versionCount',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'ownerId',
+          'title',
+          'subject',
+          'description',
+          'currentHtml',
+          'versionCount',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        isValidId(data.ownerId) &&
+        data.ownerId == request.auth.uid &&
+        data.ownerId == userId &&
+        data.title is string && data.title.size() >= 1 && data.title.size() <= 120 &&
+        data.subject is string && data.subject.size() <= 80 &&
+        data.description is string && data.description.size() <= 600 &&
+        data.currentHtml is string && data.currentHtml.size() >= 1 && data.currentHtml.size() <= 500000 &&
+        data.versionCount is number && data.versionCount >= 0 && data.versionCount <= 10000 &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidVersion(data, userId, projectId) {
+      return data.keys().hasAll([
+          'ownerId',
+          'projectId',
+          'versionNumber',
+          'description',
+          'html',
+          'source',
+          'createdAt'
+        ]) &&
+        data.keys().hasOnly([
+          'ownerId',
+          'projectId',
+          'versionNumber',
+          'description',
+          'html',
+          'source',
+          'createdAt'
+        ]) &&
+        isValidId(data.ownerId) &&
+        data.ownerId == request.auth.uid &&
+        data.ownerId == userId &&
+        isValidId(data.projectId) &&
+        data.projectId == projectId &&
+        data.versionNumber is number && data.versionNumber >= 1 && data.versionNumber <= 10000 &&
+        data.description is string && data.description.size() <= 400 &&
+        data.html is string && data.html.size() >= 1 && data.html.size() <= 500000 &&
+        data.source is string && data.source.size() <= 16 &&
+        (data.source == 'initial' || data.source == 'ai' || data.source == 'manual' || data.source == 'restore') &&
+        data.createdAt is timestamp;
+    }
+
+    function isValidMessage(data, userId, projectId) {
+      return data.keys().hasAll([
+          'ownerId',
+          'projectId',
+          'role',
+          'content',
+          'createdAt'
+        ]) &&
+        data.keys().hasOnly([
+          'ownerId',
+          'projectId',
+          'role',
+          'content',
+          'responseType',
+          'versionId',
+          'isError',
+          'createdAt'
+        ]) &&
+        isValidId(data.ownerId) &&
+        data.ownerId == request.auth.uid &&
+        data.ownerId == userId &&
+        isValidId(data.projectId) &&
+        data.projectId == projectId &&
+        data.role is string && data.role.size() <= 16 &&
+        (data.role == 'user' || data.role == 'assistant' || data.role == 'system') &&
+        data.content is string && data.content.size() >= 1 && data.content.size() <= 20000 &&
+        (!('responseType' in data) || (
+          data.responseType is string && data.responseType.size() <= 32 &&
+          (data.responseType == 'new_simulation' ||
+           data.responseType == 'code_modification' ||
+           data.responseType == 'bug_fix' ||
+           data.responseType == 'explanation' ||
+           data.responseType == 'clarification')
+        )) &&
+        (!('versionId' in data) || isValidId(data.versionId)) &&
+        (!('isError' in data) || data.isError is bool) &&
+        data.createdAt is timestamp;
+    }
+
+    function ownsParentUser(userId) {
+      return existsAfter(/databases/$(database)/documents/users/$(userId)) &&
+        getAfter(/databases/$(database)/documents/users/$(userId)).data.uid == request.auth.uid;
+    }
+
+    function ownsParentProject(userId, projectId) {
+      return existsAfter(/databases/$(database)/documents/users/$(userId)/projects/$(projectId)) &&
+        getAfter(/databases/$(database)/documents/users/$(userId)/projects/$(projectId)).data.ownerId == request.auth.uid;
+    }
+
+    // --- Collection 1: Private User Profile & Preferences (PII isolated to owner) ---
+    match /users/{userId} {
+      allow get: if isOwner(userId) && isValidId(userId);
+      allow list: if false;
+
+      allow create: if isOwner(userId) &&
+        isValidId(userId) &&
+        isValidUserProfile(incoming(), userId) &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+
+      allow update: if isOwner(userId) &&
+        isValidId(userId) &&
+        isValidUserProfile(incoming(), userId) &&
+        incoming().uid == existing().uid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        (
+          // Action: Update Studio Preferences
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'theme',
+            'providerId',
+            'model',
+            'autoSnapshot',
+            'walkthroughVoiceURI',
+            'updatedAt'
+          ]) ||
+          // Action: Refresh Google Profile Info
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'displayName',
+            'email',
+            'photoURL',
+            'updatedAt'
+          ])
+        );
+
+      allow delete: if isOwner(userId) && isValidId(userId);
+
+      // --- Collection 2: User's Simulation Projects ---
+      match /projects/{projectId} {
+        allow get: if isOwner(userId) && isValidId(userId) && isValidId(projectId) && existing().ownerId == request.auth.uid;
+        allow list: if isOwner(userId) && isValidId(userId) && existing().ownerId == request.auth.uid;
+
+        allow create: if isOwner(userId) &&
+          isValidId(userId) &&
+          isValidId(projectId) &&
+          isValidProject(incoming(), userId) &&
+          incoming().createdAt == request.time &&
+          incoming().updatedAt == request.time &&
+          ownsParentUser(userId);
+
+        allow update: if isOwner(userId) &&
+          isValidId(userId) &&
+          isValidId(projectId) &&
+          isValidProject(incoming(), userId) &&
+          existing().ownerId == request.auth.uid &&
+          incoming().ownerId == existing().ownerId &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt == request.time &&
+          (
+            // Action: Rename / Update Project Metadata
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'title',
+              'subject',
+              'description',
+              'updatedAt'
+            ]) ||
+            // Action: Save Updated Simulation HTML & Version Count
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'title',
+              'subject',
+              'description',
+              'currentHtml',
+              'versionCount',
+              'updatedAt'
+            ])
+          ) &&
+          ownsParentUser(userId);
+
+        allow delete: if isOwner(userId) &&
+          isValidId(userId) &&
+          isValidId(projectId) &&
+          existing().ownerId == request.auth.uid;
+
+        // --- Collection 3: Immutable Project Version Snapshots ---
+        match /versions/{versionId} {
+          allow get: if isOwner(userId) && isValidId(userId) && isValidId(projectId) && isValidId(versionId) && existing().ownerId == request.auth.uid;
+          allow list: if isOwner(userId) && isValidId(userId) && isValidId(projectId) && existing().ownerId == request.auth.uid;
+
+          allow create: if isOwner(userId) &&
+            isValidId(userId) &&
+            isValidId(projectId) &&
+            isValidId(versionId) &&
+            isValidVersion(incoming(), userId, projectId) &&
+            incoming().createdAt == request.time &&
+            ownsParentProject(userId, projectId);
+
+          allow update: if false;
+          allow delete: if isOwner(userId) &&
+            isValidId(userId) &&
+            isValidId(projectId) &&
+            isValidId(versionId) &&
+            existing().ownerId == request.auth.uid;
+        }
+
+        // --- Collection 4: Project Chat Conversation Messages ---
+        match /messages/{messageId} {
+          allow get: if isOwner(userId) && isValidId(userId) && isValidId(projectId) && isValidId(messageId) && existing().ownerId == request.auth.uid;
+          allow list: if isOwner(userId) && isValidId(userId) && isValidId(projectId) && existing().ownerId == request.auth.uid;
+
+          allow create: if isOwner(userId) &&
+            isValidId(userId) &&
+            isValidId(projectId) &&
+            isValidId(messageId) &&
+            isValidMessage(incoming(), userId, projectId) &&
+            incoming().createdAt == request.time &&
+            ownsParentProject(userId, projectId);
+
+          allow update: if false;
+          allow delete: if isOwner(userId) &&
+            isValidId(userId) &&
+            isValidId(projectId) &&
+            isValidId(messageId) &&
+            existing().ownerId == request.auth.uid;
+        }
+      }
+    }
+  }
+}

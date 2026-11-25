@@ -205,3 +205,126 @@ test('Firebase Hybrid AI Assistant embeds in standalone HTML and hosted PWA with
   assert.equal(validateSimulationHtml(tampered).valid, false);
 });
 
+test('Embedded AI assistant parses Markdown safely into DOM elements without raw HTML injection', () => {
+  const pkg = prepareStandaloneExport(DOUBLE_PENDULUM_HTML, 'Double Pendulum Lab');
+  const scriptMatch = pkg.html.match(
+    /<script id="physica-hybrid-assistant-script" type="module">([\s\S]*?)<\/script>/
+  );
+  assert.ok(scriptMatch?.[1], 'Assistant module script should be present');
+  const scriptSource = scriptMatch[1];
+
+  // Verify emitted JavaScript parses cleanly with zero syntax/regex errors
+  assert.doesNotThrow(() => new Function(scriptSource));
+
+  // Extract the embedded Markdown functions and execute them against a lightweight mock DOM
+  const mdStart = scriptSource.indexOf('function isSafeHttpUrl(');
+  const mdEnd = scriptSource.indexOf('function appendMessage(');
+  assert.ok(mdStart > 0 && mdEnd > mdStart, 'Markdown renderer functions should be present');
+  const mdCode = scriptSource.slice(mdStart, mdEnd);
+
+  interface MockNode {
+    type: 'element' | 'text';
+    tag?: string;
+    className?: string;
+    href?: string;
+    target?: string;
+    rel?: string;
+    children: MockNode[];
+    _text: string;
+    textContent: string;
+    appendChild(child: MockNode): MockNode;
+  }
+
+  function makeNode(type: 'element' | 'text', tagOrText: string): MockNode {
+    const node: MockNode = {
+      type,
+      tag: type === 'element' ? tagOrText : undefined,
+      children: [],
+      _text: type === 'text' ? tagOrText : '',
+      get textContent(): string {
+        if (this.type === 'text') return this._text;
+        return this.children.map((c) => c.textContent).join('');
+      },
+      set textContent(v: string) {
+        if (this.type === 'text') {
+          this._text = String(v);
+        } else {
+          this.children = v ? [makeNode('text', String(v))] : [];
+        }
+      },
+      appendChild(child: MockNode) {
+        this.children.push(child);
+        return child;
+      },
+    };
+    return node;
+  }
+
+  const mockDocument = {
+    createElement: (tag: string) => makeNode('element', tag.toLowerCase()),
+    createTextNode: (text: string) => makeNode('text', text),
+  };
+
+  const renderMarkdownInto = new Function(
+    'document',
+    'URL',
+    `${mdCode}\nreturn renderMarkdownInto;`
+  )(mockDocument, URL) as (container: MockNode, source: string) => void;
+
+  const container = makeNode('element', 'div');
+  const sampleMarkdown = [
+    '## Double Pendulum Physics',
+    '',
+    'Total energy combines **kinetic** and *potential* energy using `RK4` with masses m_1 and m_2.',
+    '',
+    '- First bullet with **bold** and [Firebase Docs](https://firebase.google.com/docs)',
+    '- Unsafe link [click me](javascript:alert(1)) and <script>alert(1)</script>',
+    '',
+    '1. Set `L1 = 2m`',
+    '2. Set `L2 = 1m`',
+    '',
+    '> Energy stays conserved when damping is zero.',
+    '',
+    '| Parameter | Value |',
+    '| --- | --- |',
+    '| L1 | 2 m |',
+    '',
+    '```js',
+    'const E = K + U;',
+    '```',
+  ].join('\n');
+
+  renderMarkdownInto(container, sampleMarkdown);
+
+  function findAll(root: MockNode, predicate: (n: MockNode) => boolean): MockNode[] {
+    const out: MockNode[] = [];
+    if (predicate(root)) out.push(root);
+    for (const c of root.children) out.push(...findAll(c, predicate));
+    return out;
+  }
+
+  // Heading, strong, em, inline code, lists, blockquote, table, fenced code block
+  assert.equal(findAll(container, (n) => n.tag === 'h4').length, 1);
+  assert.equal(findAll(container, (n) => n.tag === 'strong').length, 2);
+  assert.equal(findAll(container, (n) => n.tag === 'em').length, 1); // only *potential*, NOT m_1 + m_2
+  assert.equal(findAll(container, (n) => n.tag === 'code' && n.className === 'physica-ai-md-code').length, 3);
+  assert.equal(findAll(container, (n) => n.tag === 'ul').length, 1);
+  assert.equal(findAll(container, (n) => n.tag === 'ol').length, 1);
+  assert.equal(findAll(container, (n) => n.tag === 'blockquote').length, 1);
+  assert.equal(findAll(container, (n) => n.tag === 'table').length, 1);
+  assert.equal(findAll(container, (n) => n.tag === 'pre').length, 1);
+
+  // Physics subscripts preserved intact
+  assert.ok(container.textContent.includes('masses m_1 and m_2.'));
+
+  // Only the safe https:// link became an <a> tag; javascript: link was neutralized
+  const links = findAll(container, (n) => n.tag === 'a');
+  assert.equal(links.length, 1);
+  assert.equal(links[0].href, 'https://firebase.google.com/docs');
+  assert.equal(links[0].rel, 'noopener noreferrer');
+
+  // Raw <script> tag was NEVER parsed as a script element
+  assert.equal(findAll(container, (n) => n.tag === 'script').length, 0);
+});
+
+

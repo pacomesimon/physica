@@ -1,4 +1,5 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AlertCircle, X } from 'lucide-react';
 import { ChatPanel } from './components/ChatPanel';
 import { ExportModal } from './components/ExportModal';
 import { PreviewPanel } from './components/PreviewPanel';
@@ -6,11 +7,22 @@ import { ProjectSidebar } from './components/ProjectSidebar';
 import { SettingsModal } from './components/SettingsModal';
 import { TopBar } from './components/TopBar';
 import { VersionHistoryModal } from './components/VersionHistoryModal';
+import { useFirebaseAuth } from './contexts/FirebaseContext';
 import { parseSimulationMetadata } from './lib/metadataParser';
 import {
   publishStandaloneSimulation,
   type HostedSimulationLink,
 } from './lib/exporter';
+import {
+  deleteProjectFromCloud,
+  ensureUserProfileDoc,
+  loadProjectDetailsFromCloud,
+  saveProjectToCloud,
+  saveUserSettingsToCloud,
+  subscribeUserProjects,
+  type CloudProjectHeader,
+} from './lib/firestoreStore';
+import { sanitizeFirestoreId } from './lib/firebase';
 import {
   createBlankProject,
   createNextVersion,
@@ -52,7 +64,28 @@ const FALLBACK_PROVIDERS: ProviderOption[] = [
   },
 ];
 
+function extractReadableCloudError(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err);
+  try {
+    const parsed = JSON.parse(raw) as { error?: string };
+    if (parsed?.error) return parsed.error;
+  } catch {
+    // Plain error message
+  }
+  return raw || 'Unable to sync with cloud right now. Your changes are still saved locally.';
+}
+
 export default function App() {
+  const {
+    user,
+    authReady,
+    isSigningIn,
+    authError,
+    signInWithGoogle,
+    signOutUser,
+    clearAuthError,
+  } = useFirebaseAuth();
+
   const [projects, setProjects] = useState<SimulationProject[]>(() => repository.loadProjects());
   const [activeProjectId, setActiveProjectId] = useState<string>(
     () => repository.loadProjects()[0]?.id ?? ''
@@ -75,10 +108,50 @@ export default function App() {
   const [hostedLink, setHostedLink] = useState<HostedSimulationLink | null>(null);
   const [isPublishingHost, setIsPublishingHost] = useState(false);
 
+  // Optional Firestore cloud sync state (guests remain in 'local' mode with zero Firestore traffic)
+  const [cloudSyncStatus, setCloudSyncStatus] = useState<'local' | 'syncing' | 'synced' | 'error'>('local');
+  const [cloudError, setCloudError] = useState<string | null>(null);
+  const [cloudProfileReadyUid, setCloudProfileReadyUid] = useState<string | null>(null);
+  const [cloudSyncTick, setCloudSyncTick] = useState(0);
+  const [cloudSnapshotTick, setCloudSnapshotTick] = useState(0);
+
+  const projectsRef = useRef(projects);
+  projectsRef.current = projects;
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+  const activeProjectIdRef = useRef(activeProjectId);
+  activeProjectIdRef.current = activeProjectId;
+
+  const syncedVersionIdsRef = useRef<Map<string, Set<string>>>(new Map());
+  const syncedMessageIdsRef = useRef<Map<string, Set<string>>>(new Map());
+  const hydratedProjectIdsRef = useRef<Set<string>>(new Set());
+  const cloudKnownIdsRef = useRef<Set<string>>(new Set());
+  const pendingCloudSyncIdsRef = useRef<Set<string>>(new Set());
+
   const activeProject = useMemo(
     () => projects.find((p) => p.id === activeProjectId) || projects[0],
     [projects, activeProjectId]
   );
+
+  const queueProjectForCloudSync = useCallback((projectId: string) => {
+    pendingCloudSyncIdsRef.current.add(projectId);
+    setCloudSyncTick((t) => t + 1);
+  }, []);
+
+  const getProjectSyncSets = useCallback((projectId: string) => {
+    const safeId = sanitizeFirestoreId(projectId, 'proj');
+    let vSet = syncedVersionIdsRef.current.get(safeId);
+    if (!vSet) {
+      vSet = new Set<string>();
+      syncedVersionIdsRef.current.set(safeId, vSet);
+    }
+    let mSet = syncedMessageIdsRef.current.get(safeId);
+    if (!mSet) {
+      mSet = new Set<string>();
+      syncedMessageIdsRef.current.set(safeId, mSet);
+    }
+    return { vSet, mSet };
+  }, []);
 
   const publishActiveSimulation = useCallback(async (): Promise<HostedSimulationLink | null> => {
     setIsPublishingHost(true);
@@ -131,7 +204,7 @@ export default function App() {
     };
   }, [activeProject.currentHtml, activeProject.title, settings.walkthroughVoiceURI]);
 
-  // Sync theme class on <html>
+  // Sync theme class on <html> and persist settings locally
   useEffect(() => {
     const root = document.documentElement;
     if (settings.theme === 'dark') {
@@ -142,7 +215,7 @@ export default function App() {
     repository.saveSettings(settings);
   }, [settings]);
 
-  // Persist projects
+  // Persist projects locally (always active for both guests and signed-in users as offline cache)
   useEffect(() => {
     repository.saveProjects(projects);
     setIsDirty(false);
@@ -162,14 +235,287 @@ export default function App() {
       });
   }, []);
 
+  // Optional Firestore cloud sync lifecycle: ONLY attaches when user explicitly signs in
+  useEffect(() => {
+    if (!authReady) return;
+
+    if (!user) {
+      setCloudProfileReadyUid(null);
+      setCloudSyncStatus('local');
+      setCloudError(null);
+      syncedVersionIdsRef.current.clear();
+      syncedMessageIdsRef.current.clear();
+      hydratedProjectIdsRef.current.clear();
+      cloudKnownIdsRef.current.clear();
+      pendingCloudSyncIdsRef.current.clear();
+      return;
+    }
+
+    let cancelled = false;
+    let unsubscribeProjects: (() => void) | null = null;
+    let handledInitialSnapshot = false;
+
+    setCloudSyncStatus('syncing');
+    setCloudError(null);
+
+    const bootstrapCloud = async () => {
+      try {
+        const cloudSettings = await ensureUserProfileDoc(user, settingsRef.current);
+        if (cancelled) return;
+
+        setSettings(cloudSettings);
+        setCloudProfileReadyUid(user.uid);
+
+        unsubscribeProjects = subscribeUserProjects(
+          user.uid,
+          async (cloudHeaders: CloudProjectHeader[]) => {
+            if (cancelled) return;
+
+            cloudKnownIdsRef.current = new Set(cloudHeaders.map((h) => h.id));
+
+            // First sign-in with an empty cloud workspace: automatically preserve current local projects
+            if (!handledInitialSnapshot && cloudHeaders.length === 0) {
+              handledInitialSnapshot = true;
+              const localProjects = projectsRef.current;
+              try {
+                for (const proj of localProjects) {
+                  if (cancelled) return;
+                  const { vSet, mSet } = getProjectSyncSets(proj.id);
+                  await saveProjectToCloud(user.uid, proj, vSet, mSet);
+                  hydratedProjectIdsRef.current.add(sanitizeFirestoreId(proj.id, 'proj'));
+                }
+                if (!cancelled) {
+                  setCloudSyncStatus('synced');
+                }
+              } catch (err) {
+                if (!cancelled) {
+                  setCloudSyncStatus('error');
+                  setCloudError(extractReadableCloudError(err));
+                }
+              }
+              return;
+            }
+
+            handledInitialSnapshot = true;
+
+            if (cloudHeaders.length > 0) {
+              setProjects((prevLocal) => {
+                const localById = new Map(prevLocal.map((p) => [p.id, p]));
+                const merged: SimulationProject[] = cloudHeaders.map((header) => {
+                  const existing = localById.get(header.id);
+                  if (existing) {
+                    const htmlChanged = existing.currentHtml !== header.currentHtml;
+                    if (htmlChanged) {
+                      hydratedProjectIdsRef.current.delete(header.id);
+                    }
+                    return {
+                      ...existing,
+                      title: header.title,
+                      subject: header.subject,
+                      description: header.description,
+                      currentHtml: header.currentHtml || existing.currentHtml,
+                      createdAt: header.createdAt,
+                      updatedAt: header.updatedAt,
+                    };
+                  }
+
+                  const initialVersion: SimulationVersion = {
+                    id: `ver-cloud-${header.id}`,
+                    versionNumber: Math.max(1, header.versionCount || 1),
+                    description: 'Synced from cloud',
+                    html: header.currentHtml,
+                    source: 'initial',
+                    createdAt: header.updatedAt,
+                    metadata: header.currentHtml ? parseSimulationMetadata(header.currentHtml) : undefined,
+                  };
+
+                  return {
+                    id: header.id,
+                    title: header.title,
+                    subject: header.subject,
+                    description: header.description,
+                    currentHtml: header.currentHtml,
+                    versions: [initialVersion],
+                    messages: [],
+                    createdAt: header.createdAt,
+                    updatedAt: header.updatedAt,
+                  };
+                });
+
+                const mergedIds = new Set(merged.map((p) => p.id));
+                if (!mergedIds.has(activeProjectIdRef.current) && merged[0]) {
+                  setActiveProjectId(merged[0].id);
+                }
+
+                return merged;
+              });
+            }
+
+            if (!cancelled) {
+              setCloudSnapshotTick((t) => t + 1);
+              setCloudSyncStatus('synced');
+            }
+          },
+          (err) => {
+            if (!cancelled) {
+              setCloudSyncStatus('error');
+              setCloudError(extractReadableCloudError(err));
+            }
+          }
+        );
+      } catch (err) {
+        if (!cancelled) {
+          setCloudSyncStatus('error');
+          setCloudError(extractReadableCloudError(err));
+        }
+      }
+    };
+
+    void bootstrapCloud();
+
+    return () => {
+      cancelled = true;
+      if (unsubscribeProjects) {
+        unsubscribeProjects();
+      }
+    };
+  }, [authReady, user, getProjectSyncSets]);
+
+  // Hydrate subcollections (versions & chat messages) when selecting a cloud project
+  useEffect(() => {
+    if (!user || cloudProfileReadyUid !== user.uid || !activeProjectId) return;
+    const safeId = sanitizeFirestoreId(activeProjectId, 'proj');
+    if (!cloudKnownIdsRef.current.has(safeId)) return;
+    if (hydratedProjectIdsRef.current.has(safeId)) return;
+
+    let cancelled = false;
+
+    loadProjectDetailsFromCloud(user.uid, safeId)
+      .then(({ versions, messages }) => {
+        if (cancelled) return;
+        hydratedProjectIdsRef.current.add(safeId);
+        const { vSet, mSet } = getProjectSyncSets(safeId);
+        versions.forEach((v) => vSet.add(sanitizeFirestoreId(v.id, 'ver')));
+        messages.forEach((m) => mSet.add(sanitizeFirestoreId(m.id, 'msg')));
+
+        setProjects((prev) =>
+          prev.map((proj) => {
+            if (proj.id !== activeProjectId && sanitizeFirestoreId(proj.id, 'proj') !== safeId) {
+              return proj;
+            }
+            return {
+              ...proj,
+              versions: versions.length > 0 ? versions : proj.versions,
+              messages: messages.length > 0 ? messages : proj.messages,
+            };
+          })
+        );
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setCloudSyncStatus('error');
+          setCloudError(extractReadableCloudError(err));
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user, cloudProfileReadyUid, activeProjectId, cloudSnapshotTick, getProjectSyncSets]);
+
+  // Flush queued local project edits to Firestore when signed in
+  useEffect(() => {
+    if (!user || cloudProfileReadyUid !== user.uid) return;
+    if (pendingCloudSyncIdsRef.current.size === 0) return;
+
+    const idsToSync = Array.from(pendingCloudSyncIdsRef.current);
+    pendingCloudSyncIdsRef.current.clear();
+
+    const targets = idsToSync
+      .map((id) => projects.find((p) => p.id === id))
+      .filter((p): p is SimulationProject => Boolean(p));
+
+    if (targets.length === 0) return;
+
+    let cancelled = false;
+    setCloudSyncStatus('syncing');
+
+    (async () => {
+      try {
+        for (const proj of targets) {
+          if (cancelled) return;
+          const { vSet, mSet } = getProjectSyncSets(proj.id);
+          await saveProjectToCloud(user.uid, proj, vSet, mSet);
+          cloudKnownIdsRef.current.add(sanitizeFirestoreId(proj.id, 'proj'));
+          hydratedProjectIdsRef.current.add(sanitizeFirestoreId(proj.id, 'proj'));
+        }
+        if (!cancelled) {
+          setCloudSyncStatus('synced');
+          setCloudError(null);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setCloudSyncStatus('error');
+          setCloudError(extractReadableCloudError(err));
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user, cloudProfileReadyUid, projects, cloudSyncTick, getProjectSyncSets]);
+
+  const handleSyncLocalToCloud = useCallback(async () => {
+    if (!user || cloudProfileReadyUid !== user.uid) return;
+    setCloudSyncStatus('syncing');
+    setCloudError(null);
+    try {
+      for (const proj of projectsRef.current) {
+        const { vSet, mSet } = getProjectSyncSets(proj.id);
+        await saveProjectToCloud(user.uid, proj, vSet, mSet);
+        cloudKnownIdsRef.current.add(sanitizeFirestoreId(proj.id, 'proj'));
+        hydratedProjectIdsRef.current.add(sanitizeFirestoreId(proj.id, 'proj'));
+      }
+      setCloudSyncStatus('synced');
+    } catch (err) {
+      setCloudSyncStatus('error');
+      setCloudError(extractReadableCloudError(err));
+    }
+  }, [user, cloudProfileReadyUid, getProjectSyncSets]);
+
+  const handleUpdateSettings = useCallback(
+    (updates: Partial<StudioSettings>) => {
+      const next = { ...settingsRef.current, ...updates };
+      setSettings(next);
+      if (user && cloudProfileReadyUid === user.uid) {
+        setCloudSyncStatus('syncing');
+        saveUserSettingsToCloud(user.uid, next)
+          .then(() => {
+            setCloudSyncStatus('synced');
+            setCloudError(null);
+          })
+          .catch((err) => {
+            setCloudSyncStatus('error');
+            setCloudError(extractReadableCloudError(err));
+          });
+      }
+    },
+    [user, cloudProfileReadyUid]
+  );
+
   const updateActiveProject = useCallback(
     (updater: (prev: SimulationProject) => SimulationProject) => {
+      const targetId = activeProject.id;
       setIsDirty(true);
       setProjects((prevList) =>
-        prevList.map((proj) => (proj.id === activeProject.id ? updater(proj) : proj))
+        prevList.map((proj) => (proj.id === targetId ? updater(proj) : proj))
       );
+      if (user && cloudProfileReadyUid === user.uid) {
+        queueProjectForCloudSync(targetId);
+      }
     },
-    [activeProject.id]
+    [activeProject.id, user, cloudProfileReadyUid, queueProjectForCloudSync]
   );
 
   const handleRenameProject = (newTitle: string) => {
@@ -186,6 +532,9 @@ export default function App() {
     setProjects((prev) => [blank, ...prev]);
     setActiveProjectId(blank.id);
     setDiagnostics([]);
+    if (user && cloudProfileReadyUid === user.uid) {
+      queueProjectForCloudSync(blank.id);
+    }
   };
 
   const handleRestoreDemo = () => {
@@ -194,21 +543,46 @@ export default function App() {
     setProjects((prev) => [demo, ...prev]);
     setActiveProjectId(demo.id);
     setDiagnostics([]);
+    if (user && cloudProfileReadyUid === user.uid) {
+      queueProjectForCloudSync(demo.id);
+    }
   };
 
   const handleDeleteProject = (id: string) => {
-    setProjects((prev) => {
-      const remaining = prev.filter((p) => p.id !== id);
-      if (remaining.length === 0) {
-        const seeded = createSeededDoublePendulumProject();
-        setActiveProjectId(seeded.id);
-        return [seeded];
-      }
+    const remaining = projectsRef.current.filter((p) => p.id !== id);
+    let createdFallback: SimulationProject | null = null;
+
+    if (remaining.length === 0) {
+      createdFallback = createSeededDoublePendulumProject();
+      setProjects([createdFallback]);
+      setActiveProjectId(createdFallback.id);
+    } else {
+      setProjects(remaining);
       if (id === activeProjectId) {
         setActiveProjectId(remaining[0].id);
       }
-      return remaining;
-    });
+    }
+
+    if (user && cloudProfileReadyUid === user.uid) {
+      const safeId = sanitizeFirestoreId(id, 'proj');
+      cloudKnownIdsRef.current.delete(safeId);
+      hydratedProjectIdsRef.current.delete(safeId);
+      syncedVersionIdsRef.current.delete(safeId);
+      syncedMessageIdsRef.current.delete(safeId);
+      setCloudSyncStatus('syncing');
+      deleteProjectFromCloud(user.uid, id)
+        .then(() => {
+          setCloudSyncStatus('synced');
+        })
+        .catch((err) => {
+          setCloudSyncStatus('error');
+          setCloudError(extractReadableCloudError(err));
+        });
+
+      if (createdFallback) {
+        queueProjectForCloudSync(createdFallback.id);
+      }
+    }
   };
 
   const handleAddDiagnostic = useCallback((diag: RuntimeDiagnostic) => {
@@ -433,7 +807,38 @@ export default function App() {
         hostedUrl={hostedLink?.url ?? null}
         isPublishingHost={isPublishingHost}
         onEnsureHostedLink={publishActiveSimulation}
+        user={user}
+        isSigningIn={isSigningIn}
+        cloudSyncStatus={cloudSyncStatus}
+        onSignIn={signInWithGoogle}
+        onSignOut={signOutUser}
+        onSyncLocalToCloud={handleSyncLocalToCloud}
       />
+
+      {(authError || cloudError) && (
+        <div
+          role="alert"
+          className="shrink-0 px-3 py-1.5 bg-amber-50 dark:bg-amber-950/50 border-b border-amber-200 dark:border-amber-900/60 flex items-center justify-between gap-2 text-xs text-amber-800 dark:text-amber-200"
+        >
+          <div className="flex items-center gap-2 min-w-0">
+            <AlertCircle className="w-3.5 h-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
+            <span className="truncate">
+              {authError || cloudError} (Your work remains saved locally.)
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              clearAuthError();
+              setCloudError(null);
+            }}
+            aria-label="Dismiss cloud notice"
+            className="p-0.5 rounded hover:bg-amber-100 dark:hover:bg-amber-900/60 shrink-0"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
 
       {/* Mobile workspace switcher */}
       <div className="md:hidden shrink-0 px-3 py-1.5 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center justify-center gap-2">
@@ -544,7 +949,7 @@ export default function App() {
         <SettingsModal
           settings={settings}
           providers={providers}
-          onUpdateSettings={(updates) => setSettings((prev) => ({ ...prev, ...updates }))}
+          onUpdateSettings={handleUpdateSettings}
           onClose={() => setSettingsModalOpen(false)}
         />
       )}

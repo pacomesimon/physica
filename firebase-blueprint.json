@@ -1,0 +1,286 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Private user account profile and synced Physica Studio preferences. Strictly accessible only by the authenticated owner.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Firebase Auth UID matching the document ID.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Display name from Google profile.",
+          "maxLength": 120
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "Private Google account email address (PII, owner-only read).",
+          "maxLength": 254
+        },
+        "photoURL": {
+          "type": "string",
+          "description": "Optional Google avatar URL.",
+          "maxLength": 500
+        },
+        "theme": {
+          "type": "string",
+          "description": "Preferred UI color theme.",
+          "enum": ["light", "dark"],
+          "maxLength": 16
+        },
+        "providerId": {
+          "type": "string",
+          "description": "Selected simulation builder LLM provider.",
+          "enum": ["gemini", "openai-compatible"],
+          "maxLength": 32
+        },
+        "model": {
+          "type": "string",
+          "description": "Selected simulation builder model identifier.",
+          "maxLength": 80
+        },
+        "autoSnapshot": {
+          "type": "boolean",
+          "description": "Whether AI edits automatically save a new version snapshot."
+        },
+        "walkthroughVoiceURI": {
+          "type": "string",
+          "description": "Preferred speech synthesis voice URI for guided walkthroughs.",
+          "maxLength": 200
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the user profile was created."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the user profile was last updated."
+        }
+      },
+      "required": [
+        "uid",
+        "displayName",
+        "email",
+        "photoURL",
+        "theme",
+        "providerId",
+        "model",
+        "autoSnapshot",
+        "walkthroughVoiceURI",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "SimulationProjectDoc": {
+      "title": "SimulationProjectDoc",
+      "description": "Cloud-synced 3D physics simulation project owned by a signed-in user.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "description": "UID of the user who owns this project.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "title": {
+          "type": "string",
+          "description": "Human-readable simulation project title.",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "subject": {
+          "type": "string",
+          "description": "Physics domain or subject label.",
+          "maxLength": 80
+        },
+        "description": {
+          "type": "string",
+          "description": "Short summary of the simulation.",
+          "maxLength": 600
+        },
+        "currentHtml": {
+          "type": "string",
+          "description": "Latest standalone Three.js HTML simulation source.",
+          "minLength": 1,
+          "maxLength": 500000
+        },
+        "versionCount": {
+          "type": "number",
+          "description": "Number of recorded version snapshots."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the project was created."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the project was last updated."
+        }
+      },
+      "required": [
+        "ownerId",
+        "title",
+        "subject",
+        "description",
+        "currentHtml",
+        "versionCount",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "SimulationVersionDoc": {
+      "title": "SimulationVersionDoc",
+      "description": "Immutable version snapshot of a simulation project stored in a subcollection.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "description": "UID of the project owner.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "projectId": {
+          "type": "string",
+          "description": "Parent project document ID.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "versionNumber": {
+          "type": "number",
+          "description": "Sequential positive version number."
+        },
+        "description": {
+          "type": "string",
+          "description": "Summary of changes in this version snapshot.",
+          "maxLength": 400
+        },
+        "html": {
+          "type": "string",
+          "description": "Standalone Three.js HTML snapshot.",
+          "minLength": 1,
+          "maxLength": 500000
+        },
+        "source": {
+          "type": "string",
+          "description": "Origin of this version snapshot.",
+          "enum": ["initial", "ai", "manual", "restore"],
+          "maxLength": 16
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when this snapshot was saved."
+        }
+      },
+      "required": [
+        "ownerId",
+        "projectId",
+        "versionNumber",
+        "description",
+        "html",
+        "source",
+        "createdAt"
+      ]
+    },
+    "ProjectMessageDoc": {
+      "title": "ProjectMessageDoc",
+      "description": "Chat message belonging to a simulation project's builder conversation.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "description": "UID of the project owner.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "projectId": {
+          "type": "string",
+          "description": "Parent project document ID.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "role": {
+          "type": "string",
+          "description": "Speaker role in the builder chat.",
+          "enum": ["user", "assistant", "system"],
+          "maxLength": 16
+        },
+        "content": {
+          "type": "string",
+          "description": "Message text body.",
+          "minLength": 1,
+          "maxLength": 20000
+        },
+        "responseType": {
+          "type": "string",
+          "description": "Optional structured agent response classification.",
+          "enum": ["new_simulation", "code_modification", "bug_fix", "explanation", "clarification"],
+          "maxLength": 32
+        },
+        "versionId": {
+          "type": "string",
+          "description": "Optional linked version snapshot ID.",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "isError": {
+          "type": "boolean",
+          "description": "Whether this assistant message represents an error."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when this message was recorded."
+        }
+      },
+      "required": [
+        "ownerId",
+        "projectId",
+        "role",
+        "content",
+        "createdAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": {
+        "$ref": "#/entities/UserProfile"
+      },
+      "description": "Private per-user profile and studio preferences (PII-isolated to the authenticated owner)."
+    },
+    "/users/{userId}/projects/{projectId}": {
+      "schema": {
+        "$ref": "#/entities/SimulationProjectDoc"
+      },
+      "description": "User-owned cloud-synced 3D physics simulation projects."
+    },
+    "/users/{userId}/projects/{projectId}/versions/{versionId}": {
+      "schema": {
+        "$ref": "#/entities/SimulationVersionDoc"
+      },
+      "description": "Immutable version snapshots belonging to a user's simulation project."
+    },
+    "/users/{userId}/projects/{projectId}/messages/{messageId}": {
+      "schema": {
+        "$ref": "#/entities/ProjectMessageDoc"
+      },
+      "description": "Builder chat conversation messages belonging to a user's simulation project."
+    }
+  }
+}
