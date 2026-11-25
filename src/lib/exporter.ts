@@ -1,3 +1,4 @@
+import { ensureHybridAssistantEmbedded } from './assistant/embedder.ts';
 import { stripPreviewBridge } from './bridgeInjector.ts';
 import { validateSimulationHtml } from './htmlValidator.ts';
 import { parseSimulationMetadata } from './metadataParser.ts';
@@ -31,7 +32,8 @@ export function extractCdnDependencies(html: string): string[] {
       url.includes('cdn') ||
       url.includes('unpkg') ||
       url.includes('esm.sh') ||
-      url.includes('fonts.googleapis')
+      url.includes('fonts.googleapis') ||
+      url.includes('gstatic.com/firebasejs')
     ) {
       urls.add(url);
     }
@@ -44,7 +46,8 @@ export function prepareStandaloneExport(
   projectTitle?: string,
   preferredVoice?: string
 ): ExportPackage {
-  const cleanHtml = ensureWalkthroughEmbedded(stripPreviewBridge(rawHtml).trim(), preferredVoice);
+  const withWalkthrough = ensureWalkthroughEmbedded(stripPreviewBridge(rawHtml).trim(), preferredVoice);
+  const cleanHtml = ensureHybridAssistantEmbedded(withWalkthrough);
   const metadata = parseSimulationMetadata(cleanHtml);
   const validation = validateSimulationHtml(cleanHtml);
   const filename = slugifyFilename(projectTitle || metadata.title);
@@ -59,6 +62,87 @@ export function prepareStandaloneExport(
     validation,
     cdnDependencies,
   };
+}
+
+export interface HostedSimulationLink {
+  id: string;
+  path: string;
+  url: string;
+  manifestPath: string;
+  swPath: string;
+  title: string;
+  shortName: string;
+  byteSize: number;
+}
+
+export async function publishStandaloneSimulation(
+  rawHtml: string,
+  projectTitle?: string,
+  preferredVoice?: string
+): Promise<HostedSimulationLink> {
+  const pkg = prepareStandaloneExport(rawHtml, projectTitle, preferredVoice);
+  if (!pkg.validation.valid) {
+    throw new Error(pkg.validation.errors.join(' ') || 'Simulation HTML failed validation.');
+  }
+
+  const response = await fetch('/api/published', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      html: pkg.html,
+      title: projectTitle || pkg.metadata.title,
+      description: pkg.metadata.topic,
+      preferredVoice,
+    }),
+  });
+
+  const payload = (await response.json()) as Partial<HostedSimulationLink> & { error?: string };
+  if (!response.ok || !payload.path || !payload.id) {
+    throw new Error(payload.error || `Failed to publish hosted webpage (${response.status}).`);
+  }
+
+  const origin = typeof window !== 'undefined' ? window.location.origin : '';
+  const url = origin ? new URL(payload.path, origin).toString() : payload.path;
+
+  return {
+    id: payload.id,
+    path: payload.path,
+    url,
+    manifestPath: payload.manifestPath || `${payload.path}manifest.webmanifest`,
+    swPath: payload.swPath || `${payload.path}sw.js`,
+    title: payload.title || projectTitle || pkg.metadata.title,
+    shortName: payload.shortName || 'Physica Sim',
+    byteSize: payload.byteSize || pkg.byteSize,
+  };
+}
+
+export async function copyTextToClipboard(text: string): Promise<boolean> {
+  if (!text) return false;
+  if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      // Fallback for restricted iframe clipboard contexts
+    }
+  }
+
+  try {
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.setAttribute('readonly', '');
+    textarea.style.position = 'fixed';
+    textarea.style.top = '-9999px';
+    textarea.style.left = '-9999px';
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(textarea);
+    return ok;
+  } catch {
+    return false;
+  }
 }
 
 export function downloadStandaloneHtml(

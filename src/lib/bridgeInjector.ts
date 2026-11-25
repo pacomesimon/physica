@@ -101,8 +101,13 @@ export function injectPreviewBridge(html: string): string {
 }
 
 export function stripPreviewBridge(html: string): string {
-  return html.replace(
-    new RegExp(`<script\\s+${BRIDGE_MARKER}[^>]*>[\\s\\S]*?<\\/script>\\s*`, 'gi'),
-    ''
-  );
+  return html
+    .replace(
+      new RegExp(`\\r?\\n<script\\s+${BRIDGE_MARKER}[^>]*>[\\s\\S]*?<\\/script>`, 'gi'),
+      ''
+    )
+    .replace(
+      new RegExp(`<script\\s+${BRIDGE_MARKER}[^>]*>[\\s\\S]*?<\\/script>\\r?\\n?`, 'gi'),
+      ''
+    );
 }

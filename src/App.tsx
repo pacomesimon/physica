@@ -8,6 +8,10 @@ import { TopBar } from './components/TopBar';
 import { VersionHistoryModal } from './components/VersionHistoryModal';
 import { parseSimulationMetadata } from './lib/metadataParser';
 import {
+  publishStandaloneSimulation,
+  type HostedSimulationLink,
+} from './lib/exporter';
+import {
   createBlankProject,
   createNextVersion,
   createSeededDoublePendulumProject,
@@ -68,11 +72,64 @@ export default function App() {
   const [versionsModalOpen, setVersionsModalOpen] = useState(false);
   const [exportModalOpen, setExportModalOpen] = useState(false);
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);
+  const [hostedLink, setHostedLink] = useState<HostedSimulationLink | null>(null);
+  const [isPublishingHost, setIsPublishingHost] = useState(false);
 
   const activeProject = useMemo(
     () => projects.find((p) => p.id === activeProjectId) || projects[0],
     [projects, activeProjectId]
   );
+
+  const publishActiveSimulation = useCallback(async (): Promise<HostedSimulationLink | null> => {
+    setIsPublishingHost(true);
+    try {
+      const published = await publishStandaloneSimulation(
+        activeProject.currentHtml,
+        activeProject.title,
+        settings.walkthroughVoiceURI
+      );
+      setHostedLink(published);
+      return published;
+    } catch {
+      return null;
+    } finally {
+      setIsPublishingHost(false);
+    }
+  }, [activeProject.currentHtml, activeProject.title, settings.walkthroughVoiceURI]);
+
+  // Keep hosted PWA webpage link synchronized with active simulation changes
+  useEffect(() => {
+    let cancelled = false;
+    setHostedLink(null);
+    const timer = window.setTimeout(() => {
+      setIsPublishingHost(true);
+      publishStandaloneSimulation(
+        activeProject.currentHtml,
+        activeProject.title,
+        settings.walkthroughVoiceURI
+      )
+        .then((published) => {
+          if (!cancelled) {
+            setHostedLink(published);
+          }
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setHostedLink(null);
+          }
+        })
+        .finally(() => {
+          if (!cancelled) {
+            setIsPublishingHost(false);
+          }
+        });
+    }, 300);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [activeProject.currentHtml, activeProject.title, settings.walkthroughVoiceURI]);
 
   // Sync theme class on <html>
   useEffect(() => {
@@ -373,6 +430,9 @@ export default function App() {
         onToggleChat={() => setChatOpen((v) => !v)}
         onOpenVersions={() => setVersionsModalOpen(true)}
         onOpenExport={() => setExportModalOpen(true)}
+        hostedUrl={hostedLink?.url ?? null}
+        isPublishingHost={isPublishingHost}
+        onEnsureHostedLink={publishActiveSimulation}
       />
 
       {/* Mobile workspace switcher */}
@@ -474,6 +534,8 @@ export default function App() {
           html={activeProject.currentHtml}
           projectTitle={activeProject.title}
           preferredVoice={settings.walkthroughVoiceURI}
+          hostedUrl={hostedLink?.url ?? null}
+          onEnsureHostedLink={publishActiveSimulation}
           onClose={() => setExportModalOpen(false)}
         />
       )}

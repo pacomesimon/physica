@@ -2,13 +2,16 @@ import type { ValidationResult } from '../types/simulation.ts';
 import { parseSimulationMetadata } from './metadataParser.ts';
 import { validateWalkthroughSelectors } from './walkthrough/embedder.ts';
 
-const FORBIDDEN_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
+const SERVER_SECRET_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
   { pattern: /GEMINI_API_KEY/i, label: 'Server API key identifier (GEMINI_API_KEY)' },
   { pattern: /OPENAI_COMPAT_API_KEY/i, label: 'Server API key identifier (OPENAI_COMPAT_API_KEY)' },
   { pattern: /process\.env\./, label: 'Node process.env reference' },
-  { pattern: /AIzaSy[0-9A-Za-z_-]{20,}/, label: 'Google API key literal' },
   { pattern: /sk-[0-9A-Za-z]{20,}/, label: 'Secret token literal' },
 ];
+
+const GOOGLE_KEY_PATTERN = /AIzaSy[0-9A-Za-z_-]{20,}/;
+const PUBLIC_FIREBASE_CONFIG_SCRIPT_REGEX =
+  /<script\s+type=["']application\/json["']\s+id=["']physica-firebase-config["']\s+data-physica-firebase-config>[^<]*<\/script>/gi;
 
 export function validateSimulationHtml(html: string): ValidationResult {
   const errors: string[] = [];
@@ -26,6 +29,7 @@ export function validateSimulationHtml(html: string): ValidationResult {
       hasWalkthroughConfig: false,
       hasSimulationApi: false,
       hasWalkthroughEngine: false,
+      hasHybridAssistant: false,
       walkthroughSegmentCount: 0,
       missingHighlightSelectors: [],
     };
@@ -51,10 +55,16 @@ export function validateSimulationHtml(html: string): ValidationResult {
     errors.push('No Three.js dependency or WebGLRenderer initialization detected.');
   }
 
-  for (const check of FORBIDDEN_PATTERNS) {
+  for (const check of SERVER_SECRET_PATTERNS) {
     if (check.pattern.test(trimmed)) {
       errors.push(`Security validation failed: found ${check.label}.`);
     }
+  }
+
+  // Public Firebase Web App config keys are permitted only inside the dedicated JSON script tag.
+  const withoutPublicFirebaseConfig = trimmed.replace(PUBLIC_FIREBASE_CONFIG_SCRIPT_REGEX, '');
+  if (GOOGLE_KEY_PATTERN.test(withoutPublicFirebaseConfig)) {
+    errors.push('Security validation failed: found Google API key literal.');
   }
 
   if (/data-physica-preview-bridge/i.test(trimmed)) {
@@ -80,6 +90,8 @@ export function validateSimulationHtml(html: string): ValidationResult {
   const hasSimulationApi = Boolean(metadata.hasSimulationApi);
   const hasWalkthroughEngine =
     /WALKTHROUGH_PLAYBACK_ENGINE/.test(trimmed) || /speechSynthesis/.test(trimmed);
+  const hasHybridAssistant =
+    /HYBRID_AI_ASSISTANT_START/.test(trimmed) && /physica-hybrid-assistant-script/.test(trimmed);
   const selectorCheck = hasWalkthroughConfig
     ? validateWalkthroughSelectors(trimmed)
     : { selectors: [], missingSelectors: [] };
@@ -106,6 +118,7 @@ export function validateSimulationHtml(html: string): ValidationResult {
     hasWalkthroughConfig,
     hasSimulationApi,
     hasWalkthroughEngine,
+    hasHybridAssistant,
     walkthroughSegmentCount: metadata.walkthroughSegmentCount ?? 0,
     missingHighlightSelectors: selectorCheck.missingSelectors,
   };

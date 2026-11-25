@@ -120,6 +120,7 @@ export interface ValidationResult {
   hasWalkthroughConfig?: boolean;
   hasSimulationApi?: boolean;
   hasWalkthroughEngine?: boolean;
+  hasHybridAssistant?: boolean;
   walkthroughSegmentCount?: number;
   missingHighlightSelectors?: string[];
 }

@@ -10,6 +10,7 @@ import {
   Code2,
   Eye,
 } from 'lucide-react';
+import { ensureHybridAssistantEmbedded } from '../lib/assistant/embedder';
 import { injectPreviewBridge } from '../lib/bridgeInjector';
 import { validateSimulationHtml } from '../lib/htmlValidator';
 import { ensureWalkthroughEmbedded } from '../lib/walkthrough/embedder';
@@ -48,7 +49,7 @@ export const PreviewPanel: React.FC<PreviewPanelProps> = ({
 
   const validation = useMemo(() => validateSimulationHtml(html), [html]);
   const bridgedSrcDoc = useMemo(
-    () => injectPreviewBridge(ensureWalkthroughEmbedded(html)),
+    () => injectPreviewBridge(ensureHybridAssistantEmbedded(ensureWalkthroughEmbedded(html))),
     [html]
   );
   const contentHash = useMemo(() => {
