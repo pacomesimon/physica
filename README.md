@@ -2,6 +2,7 @@
 
 Physica Studio is a web-based simulation engineering environment built for physics teachers and learners. It pairs a natural-language AI simulation developer with a live sandboxed Three.js preview, CodeMirror source inspector, narrated guided walkthroughs with cinematic camera motion, version history with diff comparison, installable offline-capable PWA hosting, an embedded Firebase Hybrid AI assistant, and optional Google Authentication with Cloud Firestore workspace sync.
 
+Try the app here: https://physica-studio.ai.studio/
 ## Key Features
 
 - **Preloaded 3D Double Pendulum Default Simulation**: Opens immediately with a clean, RK4-integrated 3D double pendulum suspended from a simple pivot on a visible A-frame stand (initial lengths $L_1 = 2\text{ m}$ and $L_2 = 1\text{ m}$), alongside the reference Projectile Motion simulation.

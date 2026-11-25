@@ -1,4 +1,4 @@
-import firebaseAppletConfig from '../../../firebase-applet-config.json';
+import firebaseAppletConfig from '../../../firebase-applet-config.json' with { type: 'json' };
 import { parseSimulationMetadata } from '../metadataParser.ts';
 
 export const HYBRID_ASSISTANT_START_MARKER = '<!-- HYBRID_AI_ASSISTANT_START -->';
