@@ -137,3 +137,7 @@ Select **OpenAI-Compatible Endpoint** in **Provider & Studio Settings** inside t
 npm run build
 NODE_ENV=production npm start
 ```
+
+## License
+
+This project is licensed under the Apache License 2.0 — see the [LICENSE](./LICENSE) file for details.
